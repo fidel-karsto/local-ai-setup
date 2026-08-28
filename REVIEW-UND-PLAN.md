@@ -13,7 +13,11 @@ Stand: 2026-08-28 · Bezug: `README.md` auf `main` (dcf46be)
 >   ChromaDB-Server im Compose-Profil `rag-batch`, gehärteter Indexer
 >   (`scripts/rag-indexer.py`) mit systemd-Timer (`scripts/systemd/`),
 >   Open-WebUI-Tool `tools/heim_docs_suche.py` für die Suche im Chat
-> - ⬜ **Phase 4** (HTTPS, Backup, WoL, Troubleshooting) — offen
+> - ✅ **Phase 4** (Betrieb & Komfort) — umgesetzt: HTTPS via mkcert
+>   (`nginx/heim-ki-https.conf`, README §10), Backup + Restore
+>   (`scripts/backup.sh` + systemd-Timer, README §11), Wake-on-LAN
+>   (`scripts/wol.sh`, README §12), Troubleshooting-Kapitel (README §13);
+>   Compose-Volumes mit festen Namen für eindeutiges Backup/Restore
 
 ---
 

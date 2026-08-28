@@ -5,7 +5,7 @@
 > Basierend auf einem Setup von Matthias Kallenbach (LinkedIn-Post). Ziel: Eine ChatGPT-ähnliche Oberfläche für alle im Haushalt („Mama kann auch die Heim-KI benutzen"), bei der **keine Daten das eigene Netzwerk verlassen**.
 
 **Dieses Repo enthält neben dem Tutorial die fertigen Konfigurationsdateien:**
-[`docker-compose.yml`](docker-compose.yml) · [`.env.example`](.env.example) · [`nginx/heim-ki.conf`](nginx/heim-ki.conf) · [`scripts/rag-indexer.py`](scripts/rag-indexer.py) · [`scripts/systemd/`](scripts/systemd) · [`tools/heim_docs_suche.py`](tools/heim_docs_suche.py)
+[`docker-compose.yml`](docker-compose.yml) · [`.env.example`](.env.example) · [`nginx/`](nginx) (HTTP- und HTTPS-Konfiguration) · [`scripts/`](scripts) (RAG-Indexer, Backup, Wake-on-LAN, systemd-Units) · [`tools/heim_docs_suche.py`](tools/heim_docs_suche.py) (Open-WebUI-Werkzeug)
 
 ---
 
@@ -392,20 +392,122 @@ Die Image-Versionen sind in der [`.env`](.env.example) **gepinnt** — bewusst k
 docker compose pull && docker compose up -d
 ```
 
-**Vor größeren Versionssprüngen** das Open-WebUI-Volume sichern — dort liegen Nutzer, Chats und Wissenssammlungen:
+**Vor größeren Versionssprüngen** ein Backup ziehen (siehe §11): `sudo /srv/scripts/backup.sh` — oder einfach den nächtlichen Backup-Timer abwarten.
+
+---
+
+## 10. HTTPS im LAN
+
+HTTPS im LAN ist mehr als Kosmetik: Ohne Secure Context blockieren Browser den **Mikrofon-Zugriff** — die Sprach-Ein-/Ausgabe von Open WebUI funktioniert über `http://` von anderen Geräten aus schlicht nicht. Außerdem verschwinden die „Nicht sicher"-Warnungen in der Adressleiste, die im Familienbetrieb nur Fragen aufwerfen.
+
+Der Weg mit [mkcert](https://github.com/FiloSottile/mkcert): eine eigene kleine Zertifizierungsstelle (CA) auf dem Docker-Host, die Zertifikate für die drei `.lan`-Namen ausstellt.
+
+**Schritt 1 — CA anlegen und Zertifikat ausstellen** (auf dem Docker-Host):
 
 ```bash
-docker run --rm -v open-webui-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/open-webui-data-$(date +%F).tar.gz -C /data .
+sudo apt install mkcert libnss3-tools
+mkcert -install        # legt die lokale CA an und trägt sie auf DIESEM Rechner ein
+
+# Ein Zertifikat für alle drei Namen:
+mkcert chat.heim.lan ollama.heim.lan ollama-ws.heim.lan
+
+sudo mkdir -p /etc/nginx/certs
+sudo cp chat.heim.lan+2.pem     /etc/nginx/certs/heim-ki.pem
+sudo cp chat.heim.lan+2-key.pem /etc/nginx/certs/heim-ki-key.pem
 ```
 
-(Das `ollama-data`-Volume enthält nur die Modelle — die sind jederzeit per `ollama pull` wiederherstellbar und müssen nicht gesichert werden.)
+**Schritt 2 — NGINX auf HTTPS umstellen:** Die fertige Konfiguration liegt unter [`nginx/heim-ki-https.conf`](nginx/heim-ki-https.conf) — sie leitet Port 80 auf 443 um und **ersetzt** die HTTP-Variante:
 
-## 10. Weiterführende Ideen
+```bash
+sudo cp nginx/heim-ki-https.conf /etc/nginx/sites-available/
+sudo rm -f /etc/nginx/sites-enabled/heim-ki.conf
+sudo ln -s /etc/nginx/sites-available/heim-ki-https.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
 
-- **HTTPS im LAN:** Mit [Caddy](https://caddyserver.com) oder eigener CA (z. B. [mkcert](https://github.com/FiloSottile/mkcert)) Zertifikate für die `.lan`-Domains ausstellen. Das ist mehr als Kosmetik: Ohne HTTPS (Secure Context) blockieren Browser den Mikrofon-Zugriff — die Sprach-Ein-/Ausgabe von Open WebUI funktioniert über `http://` von anderen Geräten aus nicht.
-- **Wake-on-LAN** für die Workstation, um sie bei Bedarf aus der Ferne zu starten.
+**Schritt 3 — CA auf den Familien-Geräten installieren.** Das ist der Preis von LAN-HTTPS: Jedes Gerät muss der eigenen CA einmalig vertrauen. Die CA-Datei liegt unter `$(mkcert -CAROOT)/rootCA.pem` — **nur die `rootCA.pem` verteilen, niemals die `rootCA-key.pem`!**
+
+- **Windows:** Doppelklick auf `rootCA.pem` → *Zertifikat installieren* → Speicherort *Vertrauenswürdige Stammzertifizierungsstellen*.
+- **Android:** Datei aufs Gerät kopieren → *Einstellungen → Sicherheit → Zertifikat installieren (CA-Zertifikat)*.
+- **iOS/iPadOS:** `rootCA.pem` z. B. per AirDrop/Mail öffnen → Profil installieren → zusätzlich unter *Einstellungen → Allgemein → Info → Zertifikatsvertrauen* aktivieren.
+- **macOS/Linux:** in den Schlüsselbund bzw. System-Truststore importieren; Firefox verwaltet seinen eigenen Speicher (*Einstellungen → Zertifikate → Importieren*).
+
+**Alternative:** Wer statt des Host-NGINX lieber [Caddy](https://caddyserver.com) als Container einsetzt, bekommt mit `tls internal` dasselbe automatisch (Caddy bringt seine eigene CA mit) — das Verteilen der CA-Datei auf die Geräte bleibt aber auch dort nötig.
+
+---
+
+## 11. Backup & Restore
+
+Gesichert werden muss, was nicht wiederbeschaffbar ist: das **Open-WebUI-Volume** (Nutzer, Chats, Wissenssammlungen), das **Chroma-Volume** (RAG-Index aus Variante B) und das Indexer-Manifest. Die Ollama-Modelle sind bewusst ausgenommen — die holt `ollama pull` jederzeit neu.
+
+Das Skript [`scripts/backup.sh`](scripts/backup.sh) erledigt genau das (inklusive Aufräumen alter Stände, Standard: 14 Tage) und läuft per systemd-Timer täglich um 3:30 Uhr — nach dem RAG-Indexer:
+
+```bash
+sudo cp scripts/backup.sh /srv/scripts/ && sudo chmod +x /srv/scripts/backup.sh
+sudo cp scripts/systemd/heim-ki-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now heim-ki-backup.timer
+
+# Manuell laufen lassen / Logs:
+sudo systemctl start heim-ki-backup.service
+journalctl -u heim-ki-backup.service
+```
+
+Zielverzeichnis ist `/srv/backups/heim-ki` (per `BACKUP_DIR` änderbar — idealerweise ein NAS-Mount, damit die Sicherung nicht auf derselben Platte liegt wie die Daten).
+
+**Restore** (Beispiel Open-WebUI-Volume; für `chroma-data` analog):
+
+```bash
+docker compose down
+docker run --rm -v open-webui-data:/data -v /srv/backups/heim-ki:/backup alpine \
+  sh -c "rm -rf /data/* && tar xzf /backup/open-webui-data-JJJJ-MM-TT.tar.gz -C /data"
+docker compose up -d
+```
+
+---
+
+## 12. Wake-on-LAN für die Workstation
+
+Damit die Workstation mit der großen GPU nicht durchlaufen muss, weckt man sie bei Bedarf aus dem LAN:
+
+**Einmalig auf der Workstation einrichten:**
+1. Im **BIOS/UEFI** „Wake on LAN" (o. ä.) aktivieren.
+2. In Windows im **Geräte-Manager** beim Netzwerkadapter unter *Energieverwaltung* „Gerät kann den Computer aus dem Ruhezustand aktivieren" und unter *Erweitert* „Wake on Magic Packet" aktivieren.
+3. Den **Windows-Schnellstart deaktivieren** (*Energieoptionen → Auswählen, was beim Drücken von Netzschaltern geschehen soll*) — mit aktivem Schnellstart ist „Herunterfahren" ein Hybrid-Zustand, aus dem WoL oft nicht funktioniert.
+4. Die MAC-Adresse notieren: `ipconfig /all` → „Physische Adresse".
+
+**Wecken vom Docker-Host** mit [`scripts/wol.sh`](scripts/wol.sh):
+
+```bash
+sudo apt install wakeonlan
+./scripts/wol.sh AA:BB:CC:DD:EE:FF
+```
+
+Eine Minute später ist das Workstation-Ollama unter `ollama-ws.heim.lan` verfügbar (die native Windows-App startet automatisch mit). **Tipp:** Eine Fritz!Box kann das auch ohne Skript — in den Gerätedetails unter *Heimnetz → Netzwerk* gibt es den Knopf „Computer starten".
+
+---
+
+## 13. Troubleshooting
+
+| Symptom | Ursache & Abhilfe |
+|---|---|
+| Container sehen die GPU nicht | Test: `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`. Schlägt das fehl: `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`. Nach einem Treiber-Update: Host neu starten. |
+| Antworten plötzlich sehr langsam | `docker exec ollama ollama ps` zeigt, ob das Modell (teilweise) auf der CPU läuft (`XX%/YY% CPU/GPU`). Abhilfe: kleineres/stärker quantisiertes Modell, oder §4-Hinweise (`OLLAMA_MAX_LOADED_MODELS=1`). |
+| Erster Prompt „hängt" | Das Modell wird gerade ins VRAM geladen — bei größeren Modellen dauert das. `OLLAMA_KEEP_ALIVE` (§4) verhindert häufiges Neuladen. |
+| `403 Forbidden` von `ollama.heim.lan` | Host-Header-Schutz von Ollama — die Konfiguration aus §6 sendet deshalb `Host 127.0.0.1:11434`; prüfen, ob wirklich die Repo-Konfiguration aktiv ist (`nginx -T \| grep -A5 ollama`). |
+| Upload scheitert mit `413 Request Entity Too Large` | `client_max_body_size` fehlt/zu klein — in `nginx/heim-ki.conf` enthalten (100 MB), NGINX neu laden. |
+| Docling-Container stürzt ab / Host swappt bei großen PDFs | Docling-OCR ist RAM-hungrig. Große Scans aufteilen, oder dem Service in der Compose-Datei ein `mem_limit` geben; notfalls Dokumente einzeln hochladen. |
+| `ollama-ws.heim.lan` nach Windows-Neustart tot (WSL-Weg) | Die WSL-IP ist gewandert — Portproxy neu setzen oder auf *mirrored networking* bzw. die native App umstellen (§5). |
+| Werkzeug „Heim-Dokumente" findet nichts | Läuft Chroma? (`docker compose ps` → `chroma (healthy)`). Hat der Indexer geschrieben? (`journalctl -u rag-indexer.service`). Stimmen Collection-Name und `chroma_url` in den Valves des Werkzeugs? |
+| Allgemeine Diagnose | `docker compose ps` (Healthchecks!), `docker logs open-webui`, `docker logs ollama`, `nvidia-smi`, `docker stats`. |
+
+---
+
+## 14. Weiterführende Ideen
+
 - **Modell-Empfehlungen für 4 GB VRAM:** `llama3.2:3b`, `qwen2.5:3b`, `phi3:mini` — alle in der [Ollama Library](https://ollama.com/library).
+- **Zugriff von unterwegs:** Statt Portfreigaben ein VPN ins Heimnetz — die Fritz!Box kann WireGuard direkt, alternativ [Tailscale](https://tailscale.com). So bleibt die Heim-KI auch unterwegs erreichbar, ohne dass irgendetwas im Internet exponiert wird.
+- **Automatische Update-Benachrichtigungen:** z. B. Watchtower im Monitor-Modus (`WATCHTOWER_MONITOR_ONLY=true`), damit Updates gemeldet, aber bewusst eingespielt werden (§9).
 
 ## Quellenübersicht
 
@@ -418,5 +520,6 @@ docker run --rm -v open-webui-data:/data -v "$PWD":/backup alpine \
 | Docling Serve | https://github.com/docling-project/docling-serve |
 | ChromaDB | https://www.trychroma.com |
 | NGINX Reverse Proxy | https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/ |
+| mkcert | https://github.com/FiloSottile/mkcert |
 | NVIDIA Container Toolkit | https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html |
 | WSL2 | https://learn.microsoft.com/de-de/windows/wsl/install |
