@@ -1,0 +1,7 @@
+# Abhängigkeiten des RAG-Indexers (scripts/rag-indexer.py)
+# Installation:
+#   python3 -m venv /srv/scripts/.venv
+#   /srv/scripts/.venv/bin/pip install -r requirements.txt
+docling>=2.0
+chromadb>=1.0,<2
+ollama>=0.4

@@ -1,0 +1,11 @@
+[Unit]
+Description=Tägliches Backup der Heim-KI-Daten (3:30 Uhr, nach dem RAG-Indexer)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+# Verpasste Läufe nachholen (z. B. wenn der Host nachts aus war):
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

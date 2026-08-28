@@ -4,6 +4,9 @@
 
 > Basierend auf einem Setup von Matthias Kallenbach (LinkedIn-Post). Ziel: Eine ChatGPT-ähnliche Oberfläche für alle im Haushalt („Mama kann auch die Heim-KI benutzen"), bei der **keine Daten das eigene Netzwerk verlassen**.
 
+**Dieses Repo enthält neben dem Tutorial die fertigen Konfigurationsdateien:**
+[`docker-compose.yml`](docker-compose.yml) · [`.env.example`](.env.example) · [`nginx/`](nginx) (HTTP- und HTTPS-Konfiguration) · [`scripts/`](scripts) (RAG-Indexer, Backup, Wake-on-LAN, systemd-Units) · [`tools/heim_docs_suche.py`](tools/heim_docs_suche.py) (Open-WebUI-Werkzeug)
+
 ---
 
 ## 1. Was wird gebaut? (Architektur-Überblick)
@@ -37,7 +40,7 @@ Das Setup besteht aus zwei Maschinen und mehreren Diensten:
                         └────────┼────────────────────────────┘
                                  │
                         ┌────────▼────────────────────────────┐
-                        │  Workstation (Windows + WSL2)       │
+                        │  Workstation (Windows, nativ o. WSL2)│
                         │  Ollama "on demand" — nur an,       │
                         │  wenn der Rechner läuft; für        │
                         │  größere Modelle mit stärkerer GPU  │
@@ -48,7 +51,7 @@ Das Setup besteht aus zwei Maschinen und mehreren Diensten:
 
 | Komponente | Rolle |
 |---|---|
-| **[Ollama](https://ollama.com)** | Lokaler LLM-Server. Läuft als Docker-Container auf dem Docker-Host (mit 4-GB-CUDA-GPU) **und** zusätzlich „on demand" auf der Windows-Workstation (WSL2). |
+| **[Ollama](https://ollama.com)** | Lokaler LLM-Server. Läuft als Docker-Container auf dem Docker-Host (mit 4-GB-CUDA-GPU) **und** zusätzlich „on demand" auf der Windows-Workstation (nativ oder WSL2). |
 | **[Open WebUI](https://github.com/open-webui/open-webui)** | ChatGPT-ähnliche Weboberfläche für Ollama — mit Nutzerverwaltung, Dokumenten-Upload und eingebautem RAG. |
 | **[bge-m3](https://ollama.com/library/bge-m3)** | Mehrsprachiges Embedding-Modell (BAAI). Wandelt Texte in Vektoren um — die Grundlage für die Dokumentensuche (RAG). Sehr gut für Deutsch geeignet. |
 | **[Docling](https://github.com/docling-project/docling)** | Open-Source-Tool von IBM Research: konvertiert PDF, DOCX, PPTX, HTML usw. in sauberes, strukturiertes Markdown/JSON — inkl. Tabellen und Layout-Erkennung. (Im Original-Post „Dockling" geschrieben — gemeint ist Docling.) |
@@ -62,16 +65,16 @@ Das Setup besteht aus zwei Maschinen und mehreren Diensten:
 ## 2. Voraussetzungen
 
 **Hardware:**
-- Ein Linux-Rechner als Docker-Host, der dauerhaft läuft (Mini-PC, alter Desktop, Homeserver), mit einer NVIDIA-GPU mit mindestens 4 GB VRAM. Das reicht für kleine Modelle (z. B. 3B–7B quantisiert) und Embeddings.
+- Ein Linux-Rechner als Docker-Host, der dauerhaft läuft (Mini-PC, alter Desktop, Homeserver), mit einer NVIDIA-GPU mit mindestens 4 GB VRAM. Das reicht für kleine Modelle (z. B. 3B–7B quantisiert) und Embeddings. **Aber:** 4 GB sind knapp, wenn Chat- und Embedding-Modell gleichzeitig gebraucht werden — und genau das passiert bei RAG. Siehe „Realistische Erwartungen bei 4 GB VRAM" in §4.
 - Optional: Eine Windows-Workstation mit stärkerer GPU für größere Modelle „on demand".
 
 **Software:**
 - Docker + Docker Compose auf dem Host → [Installationsanleitung](https://docs.docker.com/engine/install/)
 - NVIDIA-Treiber + **NVIDIA Container Toolkit** (damit Container die GPU nutzen können) → [Installationsanleitung](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-- Auf der Workstation: WSL2 → [Microsoft-Doku](https://learn.microsoft.com/de-de/windows/wsl/install)
+- Auf der Workstation: nichts Besonderes — Ollama gibt es nativ für Windows. (WSL2 nur für den Fortgeschrittenen-Weg in §5 → [Microsoft-Doku](https://learn.microsoft.com/de-de/windows/wsl/install))
 
 **Netzwerk:**
-- Möglichkeit, lokale DNS-Namen zu vergeben (z. B. im Router — Fritz!Box kann das —, per Pi-hole, oder notfalls per `hosts`-Datei auf den Clients).
+- Möglichkeit, lokale DNS-Namen zu vergeben — realistisch per **Pi-hole/AdGuard Home** oder notfalls per `hosts`-Datei auf den Clients. Eine Fritz!Box allein kann das *nicht* frei konfigurierbar (Details und Optionen in §6, Schritt 1).
 
 ---
 
@@ -103,49 +106,44 @@ Wenn `nvidia-smi` die GPU anzeigt, ist alles bereit.
 
 ## 4. Ollama + Open WebUI als Container
 
-Eine `docker-compose.yml` anlegen:
+Die fertige [`docker-compose.yml`](docker-compose.yml) liegt in diesem Repo; konfiguriert wird über eine `.env`:
+
+```bash
+git clone https://github.com/fidel-karsto/local-ai-setup.git && cd local-ai-setup
+cp .env.example .env      # bei Bedarf anpassen (Image-Versionen, Zeitzone, …)
+docker compose up -d
+```
+
+Die wichtigsten Punkte der Compose-Datei (gekürzt — die Datei im Repo ist die Referenz):
 
 ```yaml
 services:
   ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    restart: unless-stopped
+    image: ollama/ollama:0.33.1          # gepinnt statt :latest — siehe "Updates" (§9)
+    environment:
+      - OLLAMA_KEEP_ALIVE=30m            # Modelle nicht sofort aus dem VRAM entladen
+      - OLLAMA_MAX_LOADED_MODELS=1       # bei 4 GB VRAM: nur 1 Modell gleichzeitig
     volumes:
       - ollama-data:/root/.ollama
     ports:
-      - "11434:11434"      # nur intern nötig, NGINX proxyt später
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+      - "127.0.0.1:11434:11434"          # nur localhost — NGINX (§6) ist der LAN-Eingang
+    deploy: …                            # GPU-Reservierung, siehe Datei
 
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: open-webui
-    restart: unless-stopped
-    depends_on:
-      - ollama
+    image: ghcr.io/open-webui/open-webui:v0.11.1
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
     volumes:
       - open-webui-data:/app/backend/data
     ports:
-      - "3000:8080"
-
-volumes:
-  ollama-data:
-  open-webui-data:
+      - "127.0.0.1:3000:8080"            # nur localhost, s. o.
 ```
 
-Starten und Modelle laden:
+Beide Ports sind bewusst **nur an `127.0.0.1` gebunden**: Aus dem LAN kommt man ausschließlich über den NGINX aus §6 — so gibt es genau einen Eingang, und die unauthentifizierte Ollama-API liegt nicht offen im Netz. (Das heißt auch: `http://<docker-host-ip>:3000` funktioniert von anderen Rechnern aus *nicht* — erst §6 einrichten und `http://chat.heim.lan` benutzen, oder zum Testen per SSH-Tunnel `ssh -L 3000:localhost:3000 <docker-host>`.)
+
+Modelle laden:
 
 ```bash
-docker compose up -d
-
 # Ein kleines Chat-Modell, das in 4 GB VRAM passt:
 docker exec ollama ollama pull llama3.2:3b
 
@@ -153,7 +151,9 @@ docker exec ollama ollama pull llama3.2:3b
 docker exec ollama ollama pull bge-m3
 ```
 
-Open WebUI ist jetzt unter `http://<docker-host-ip>:3000` erreichbar. Beim ersten Aufruf einen Admin-Account anlegen.
+**Erster Login & Registrierung:** Beim ersten Aufruf einen Admin-Account anlegen. Danach die offene Selbstregistrierung schließen — sonst kann sich jeder im LAN ein Konto anlegen: in der `.env` `ENABLE_SIGNUP=false` setzen und `docker compose up -d` erneut ausführen (oder in den *Admin-Einstellungen* die Standardrolle neuer Nutzer auf „Ausstehend" stellen und Familienmitglieder einzeln freigeben).
+
+**Realistische Erwartungen bei 4 GB VRAM:** `llama3.2:3b` (~2 GB) und `bge-m3` (~1,2 GB) passen jeweils einzeln bequem ins VRAM — bei RAG werden aber beide kurz hintereinander gebraucht (erst Embedding der Frage, dann Antwort des Chat-Modells). Mit `OLLAMA_MAX_LOADED_MODELS=1` wechseln sich die Modelle ab (kurze Ladepausen pro Anfrage); ohne das Limit landet ein Teil der Schichten auf der CPU (funktioniert, ist aber spürbar langsamer). `OLLAMA_KEEP_ALIVE=30m` verhindert zumindest, dass Modelle schon nach 5 Minuten Leerlauf wieder entladen werden. Wer regelmäßig RAG nutzt, profitiert deutlich von mehr VRAM — oder rechnet die Embeddings bewusst auf der CPU.
 
 **Quellen:**
 - Ollama Docker-Image: https://hub.docker.com/r/ollama/ollama
@@ -161,11 +161,23 @@ Open WebUI ist jetzt unter `http://<docker-host-ip>:3000` erreichbar. Beim erste
 
 ---
 
-## 5. Ollama „on demand" auf der Windows-Workstation (WSL2)
+## 5. Ollama „on demand" auf der Windows-Workstation
 
 Die Workstation hat typischerweise die stärkere GPU, läuft aber nicht rund um die Uhr. Deshalb läuft dort ein zweiter Ollama-Server, der nur verfügbar ist, wenn der Rechner an ist.
 
-In WSL2 (Ubuntu):
+### Empfohlener Weg: native Windows-App
+
+[Ollama für Windows](https://ollama.com/download/windows) installieren, dann als *Benutzer-Umgebungsvariable* (`Systemsteuerung → Umgebungsvariablen`) `OLLAMA_HOST=0.0.0.0` setzen und Ollama neu starten, damit es aus dem LAN erreichbar ist. Zuletzt den Port in der Windows-Firewall freigeben (PowerShell als Administrator):
+
+```powershell
+New-NetFirewallRule -DisplayName "Ollama" -Direction Inbound -LocalPort 11434 -Protocol TCP -Action Allow
+```
+
+Fertig — kein WSL, kein Portproxy, und Ollama startet automatisch mit Windows.
+
+### Alternative für Fortgeschrittene: WSL2
+
+Wer Ollama lieber in WSL2 (Ubuntu) betreibt:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
@@ -186,13 +198,23 @@ netsh interface portproxy add v4tov4 listenport=11434 listenaddress=0.0.0.0 conn
 New-NetFirewallRule -DisplayName "Ollama WSL" -Direction Inbound -LocalPort 11434 -Protocol TCP -Action Allow
 ```
 
-Alternativ (einfacher): [Ollama für Windows](https://ollama.com/download/windows) nativ installieren und die Umgebungsvariable `OLLAMA_HOST=0.0.0.0` setzen — dann entfällt das Portproxy-Gefrickel.
+**Stolperfallen des WSL-Wegs:**
+- Die WSL-IP **ändert sich bei jedem Windows-Neustart** — der `portproxy` zeigt danach ins Leere und muss neu gesetzt werden (z. B. per Skript in der Aufgabenplanung). Eleganter: auf Windows 11 22H2+ in der `.wslconfig` das *mirrored networking* aktivieren (`networkingMode=mirrored`), dann teilt sich WSL die Windows-IP und der Portproxy entfällt komplett.
+- `ollama serve` im Terminal ist **kein Dienst** — Terminal zu, Ollama weg. Für dauerhaften Betrieb in WSL einen systemd-Service einrichten (systemd in `/etc/wsl.conf` aktivieren; das Install-Skript legt `ollama.service` bereits an, dort `Environment="OLLAMA_HOST=0.0.0.0:11434"` als Override setzen).
 
 ---
 
 ## 6. NGINX Reverse Proxy: sprechende Namen statt Ports
 
-Der Clou des Setups: Statt IP-Adressen und Ports (`192.168.1.10:3000`, `:11434`) gibt es saubere Namen im LAN. Der NGINX läuft ohnehin schon auf dem Docker-Host und proxyt:
+Der Clou des Setups: Statt IP-Adressen und Ports (`192.168.1.10:3000`, `:11434`) gibt es saubere Namen im LAN. Dafür läuft ein NGINX direkt auf dem Docker-Host — falls noch nicht vorhanden, installieren:
+
+```bash
+sudo apt install nginx
+```
+
+(Das unten verwendete `sites-available`/`sites-enabled`-Schema ist Debian/Ubuntu-spezifisch. Auf anderen Distributionen die Konfiguration stattdessen nach `/etc/nginx/conf.d/heim-ki.conf` legen.)
+
+Der NGINX proxyt dann:
 
 | Name | Ziel |
 |---|---|
@@ -200,15 +222,24 @@ Der Clou des Setups: Statt IP-Adressen und Ports (`192.168.1.10:3000`, `:11434`)
 | `ollama.heim.lan` | Ollama auf dem Docker-Host (Port 11434) |
 | `ollama-ws.heim.lan` | Ollama auf der Workstation (on demand) |
 
-**Schritt 1 — DNS:** Im Router (z. B. Fritz!Box unter *Heimnetz → Netzwerk*) oder in Pi-hole die drei Namen auf die IP des Docker-Hosts zeigen lassen. (`ollama-ws.heim.lan` zeigt ebenfalls auf den Docker-Host — NGINX leitet dann zur Workstation weiter. So bleibt die Konfiguration an einer Stelle.)
+**Schritt 1 — DNS:** Alle drei Namen müssen auf die IP des Docker-Hosts zeigen. (`ollama-ws.heim.lan` zeigt ebenfalls auf den Docker-Host — NGINX leitet dann zur Workstation weiter. So bleibt die Konfiguration an einer Stelle.)
 
-**Schritt 2 — NGINX-Konfiguration** (`/etc/nginx/sites-available/heim-ki.conf`):
+> ⚠️ **Eine Fritz!Box reicht dafür allein nicht aus.** Sie vergibt nur Namen nach dem Schema `<gerätename>.fritz.box` und unterstützt weder eigene Domains wie `heim.lan` noch mehrere Namen (CNAMEs) für dieselbe IP. Realistische Optionen:
+>
+> 1. **Pi-hole oder AdGuard Home** im LAN betreiben (z. B. als weiterer Container auf dem Docker-Host) und dort unter *Local DNS Records* die drei Namen auf die IP des Docker-Hosts eintragen; anschließend Pi-hole/AdGuard als DNS-Server im Router hinterlegen. Sauberste Lösung — und blockt nebenbei Werbung.
+> 2. **`hosts`-Datei auf jedem Client** (Windows: `C:\Windows\System32\drivers\etc\hosts`, Linux/macOS: `/etc/hosts`): drei Zeilen mit `<docker-host-ip> chat.heim.lan ollama.heim.lan ollama-ws.heim.lan`. Funktioniert sofort, skaliert aber schlecht — auf Smartphones praktisch nicht machbar.
+> 3. **Kompromiss ohne Zusatzsoftware:** Den Docker-Host in der Fritz!Box z. B. `chat` nennen — dann erreicht der Haushalt Open WebUI unter `http://chat.fritz.box` (dafür in der NGINX-Konfiguration `server_name chat.fritz.box;` ergänzen bzw. als `default_server` arbeiten). Die beiden Ollama-API-Namen entfallen dabei; wer die APIs direkt braucht, nutzt dann `<docker-host-ip>:Port`.
+
+**Schritt 2 — NGINX-Konfiguration:** Die fertige Konfiguration liegt in diesem Repo unter [`nginx/heim-ki.conf`](nginx/heim-ki.conf) — vor dem Kopieren `<WORKSTATION-IP>` durch die IP der Workstation ersetzen. Die wichtigsten Blöcke (gekürzt):
 
 ```nginx
 # Open WebUI
 server {
     listen 80;
     server_name chat.heim.lan;
+
+    # Dokumenten-Upload (RAG): NGINX-Standardlimit von 1 MB reicht für PDFs nicht
+    client_max_body_size 100M;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -222,39 +253,31 @@ server {
     }
 }
 
-# Ollama API (Docker-Host)
+# Ollama API (Docker-Host) — Workstation-Block analog, siehe Datei
 server {
     listen 80;
     server_name ollama.heim.lan;
 
     location / {
         proxy_pass http://127.0.0.1:11434;
-        proxy_set_header Host $host;
+        # Ollama lehnt fremde Host-Header je nach Version als Schutz vor
+        # DNS-Rebinding ab (403) — deshalb localhost senden, nicht $host:
+        proxy_set_header Host 127.0.0.1:11434;
         proxy_read_timeout 600s;   # große Modelle brauchen Zeit
-        proxy_buffering off;        # Token-Streaming
-    }
-}
-
-# Ollama API (Workstation, on demand)
-server {
-    listen 80;
-    server_name ollama-ws.heim.lan;
-
-    location / {
-        proxy_pass http://<WORKSTATION-IP>:11434;
-        proxy_set_header Host $host;
-        proxy_read_timeout 600s;
-        proxy_buffering off;
+        proxy_buffering off;       # Token-Streaming
     }
 }
 ```
 
-Aktivieren:
+Installieren und aktivieren:
 
 ```bash
+sudo cp nginx/heim-ki.conf /etc/nginx/sites-available/
 sudo ln -s /etc/nginx/sites-available/heim-ki.conf /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+**Falls Ollama über den Proxy `403 Forbidden` liefert:** Das ist Ollamas Schutz gegen fremde Host-/Origin-Header. Die Konfiguration oben umgeht das bereits (`proxy_set_header Host 127.0.0.1:11434;`); alternativ kann man Ollama mit `OLLAMA_ORIGINS=*` (bzw. einer konkreten Liste) starten.
 
 Jetzt sind beide Ollama-APIs unter ordentlichen Base-URLs im LAN erreichbar — genau wie im Post beschrieben. In Open WebUI kann man unter *Admin-Einstellungen → Verbindungen* beide URLs (`http://ollama.heim.lan` und `http://ollama-ws.heim.lan`) als Ollama-Endpunkte eintragen. Ist die Workstation aus, nutzt man einfach die Modelle des Docker-Hosts.
 
@@ -272,16 +295,13 @@ Jetzt der Teil, der „nachts alles durchknödelt": Dokumente werden mit Docling
 
 Open WebUI bringt die komplette RAG-Pipeline bereits mit — ChromaDB ist die eingebaute Standard-Vektordatenbank, und Docling wird als Extraktions-Engine offiziell unterstützt.
 
-**1. Docling als Server-Container ergänzen** (in der `docker-compose.yml`):
+**1. Docling-Container starten:** Der Docling-Server ist in der [`docker-compose.yml`](docker-compose.yml) dieses Repos bereits enthalten — als Compose-*Profil* `rag`, damit das Basis-Setup schlank bleibt:
 
-```yaml
-  docling:
-    image: ghcr.io/docling-project/docling-serve:latest
-    container_name: docling
-    restart: unless-stopped
-    ports:
-      - "5001:5001"
+```bash
+docker compose --profile rag up -d
 ```
+
+Ein Port-Mapping braucht Docling nicht: Open WebUI erreicht den Container über das Compose-Netz direkt unter `http://docling:5001`. (Standardmäßig läuft das CPU-Image; wer die GPU für schnellere OCR mitnutzen will, trägt in der `.env` die CUDA-Variante ein — siehe [`.env.example`](.env.example). Achtung: Docling ist bei OCR-lastigen PDFs RAM-hungrig.)
 
 **2. Open WebUI konfigurieren** unter *Admin-Einstellungen → Dokumente*:
 - **Inhaltsextraktion / Content Extraction Engine:** `Docling` mit URL `http://docling:5001`
@@ -293,51 +313,57 @@ Open WebUI bringt die komplette RAG-Pipeline bereits mit — ChromaDB ist die ei
 - Open WebUI RAG-Doku: https://docs.openwebui.com/features/rag
 - Docling Serve: https://github.com/docling-project/docling-serve
 
-### Variante B: Eigene Pipeline als nächtlicher Batch-Job
+### Variante B: Eigene Pipeline als nächtlicher Batch-Job (mit Suche als Open-WebUI-Tool)
 
-Wer es wie im Post als eigenständigen Nachtjob bauen will (z. B. um einen ganzen Ordner automatisch zu indexieren), schreibt ein kleines Python-Skript:
+Wer es wie im Post als eigenständigen Nachtjob bauen will (z. B. um einen ganzen Ordner automatisch zu indexieren), bekommt hier die komplette Kette — inklusive des Teils, der im Post fehlte: der **Anbindung an die Chats**. Die Architektur:
+
+```
+/srv/dokumente ──► rag-indexer.py ──► ChromaDB-Server ◄── Open-WebUI-Tool
+                   (Host, nachts       (Container,         "Heim-Dokumente
+                    per systemd-        Profil "rag")       durchsuchen"
+                    Timer)                                  (im Chat)
+```
+
+**1. ChromaDB-Server starten:** Der Container ist in der [`docker-compose.yml`](docker-compose.yml) enthalten — im eigenen Profil `rag-batch`, denn Variante B braucht Chroma, aber nicht den Docling-Server aus Variante A:
 
 ```bash
-pip install docling chromadb ollama
+docker compose --profile rag-batch up -d
 ```
 
-```python
-#!/usr/bin/env python3
-"""Nächtlicher RAG-Indexer: Docling -> bge-m3 (Ollama) -> ChromaDB"""
-from pathlib import Path
-import chromadb
-import ollama
-from docling.document_converter import DocumentConverter
-from docling.chunking import HybridChunker
+Der Indexer auf dem Host erreicht ihn unter `127.0.0.1:8000`, das Open-WebUI-Tool über das Compose-Netz unter `http://chroma:8000`.
 
-DOCS_DIR = Path("/srv/dokumente")           # hier fliegen die Docs rum
-client = chromadb.PersistentClient(path="/srv/chroma")
-collection = client.get_or_create_collection("heim-docs")
-converter = DocumentConverter()
-chunker = HybridChunker()
-
-for f in DOCS_DIR.rglob("*"):
-    if f.suffix.lower() not in {".pdf", ".docx", ".pptx", ".html", ".md"}:
-        continue
-    doc = converter.convert(f).document          # Docling: Datei -> Struktur
-    for i, chunk in enumerate(chunker.chunk(doc)):
-        text = chunk.text
-        emb = ollama.embed(model="bge-m3", input=text)["embeddings"][0]
-        collection.upsert(
-            ids=[f"{f.name}-{i}"],
-            embeddings=[emb],
-            documents=[text],
-            metadatas=[{"quelle": str(f)}],
-        )
-    print(f"Indexiert: {f.name}")
-```
-
-Als Cronjob nachts um 2 Uhr laufen lassen:
+**2. Indexer einrichten** ([`scripts/rag-indexer.py`](scripts/rag-indexer.py)) — mit eigenem venv, damit der Zeitplan-Aufruf dieselbe Umgebung nutzt wie die Installation:
 
 ```bash
-crontab -e
-# 0 2 * * * /usr/bin/python3 /srv/scripts/rag-indexer.py >> /var/log/rag-indexer.log 2>&1
+sudo mkdir -p /srv/scripts /srv/dokumente
+sudo cp scripts/rag-indexer.py scripts/requirements.txt /srv/scripts/
+python3 -m venv /srv/scripts/.venv
+/srv/scripts/.venv/bin/pip install -r /srv/scripts/requirements.txt
+
+# Testlauf (Dokumente vorher nach /srv/dokumente legen):
+/srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py
 ```
+
+Das Skript ist auf Dauerbetrieb ausgelegt: Es überspringt unveränderte Dateien (SHA-256-Manifest in `/srv/rag-index-state.json`), entfernt die Chunks gelöschter oder geänderter Dateien, bettet Chunks *mit* Überschriften-Kontext ein (`chunker.contextualize`) und bricht bei einer kaputten Datei nicht den ganzen Lauf ab. Pfade und URLs sind per Umgebungsvariablen konfigurierbar (siehe Skript-Kopf).
+
+**3. Nächtlich laufen lassen** — als systemd-Timer ([`scripts/systemd/`](scripts/systemd/)); der holt dank `Persistent=true` auch verpasste Läufe nach, und die Logs landen im journald:
+
+```bash
+sudo cp scripts/systemd/rag-indexer.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now rag-indexer.timer
+
+# Logs ansehen:
+journalctl -u rag-indexer.service
+```
+
+(Wer lieber Cron mag: `0 2 * * * /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py >> /var/log/rag-indexer.log 2>&1`)
+
+**4. Suche in Open WebUI anbinden:** Den Inhalt von [`tools/heim_docs_suche.py`](tools/heim_docs_suche.py) in Open WebUI unter *Arbeitsbereich → Werkzeuge → +* als neues Werkzeug einfügen und speichern. Anschließend das Werkzeug beim gewünschten Modell aktivieren (*Admin-Einstellungen → Modelle → Modell bearbeiten → Werkzeuge*) oder im Chat über das ⊕-Menü zuschalten. URLs, Collection und Trefferanzahl lassen sich über die *Ventile* (Valves) des Werkzeugs anpassen.
+
+**5. Benutzen:** Im Chat einfach nach Inhalten der eigenen Dokumente fragen („Was steht in meinem Mietvertrag zur Kündigungsfrist?") — das Modell ruft das Werkzeug auf, das die passenden Textstellen samt Quellenangabe aus dem Nachtindex holt.
+
+> **Hinweis:** Variante B nutzt bewusst *nicht* Docling-Serve aus Variante A, sondern die Docling-Python-Bibliothek direkt im Indexer — deshalb das getrennte Compose-Profil: `rag` startet Docling (Variante A), `rag-batch` startet Chroma (Variante B). Beide Varianten lassen sich auch parallel betreiben.
 
 **Quellen:**
 - Docling Doku: https://docling-project.github.io/docling/
@@ -353,11 +379,135 @@ crontab -e
 - Braucht man mehr Leistung, startet man die Workstation — deren Ollama ist sofort unter `http://ollama-ws.heim.lan` verfügbar.
 - **Keine Daten fließen „nach Amiland"** — alles bleibt im eigenen LAN.
 
-## 9. Weiterführende Ideen
+## 9. Updates
 
-- **HTTPS im LAN:** Mit [Caddy](https://caddyserver.com) oder eigener CA (z. B. [mkcert](https://github.com/FiloSottile/mkcert)) Zertifikate für die `.lan`-Domains ausstellen.
-- **Wake-on-LAN** für die Workstation, um sie bei Bedarf aus der Ferne zu starten.
+Die Image-Versionen sind in der [`.env`](.env.example) **gepinnt** — bewusst kein `:latest`/`:main`, damit das Setup reproduzierbar bleibt und Updates ein bewusster Schritt sind (Open WebUI released sehr häufig, teils mit Verhaltensänderungen). Aktualisieren:
+
+```bash
+# 1. Release Notes prüfen:
+#    https://github.com/open-webui/open-webui/releases
+#    https://github.com/ollama/ollama/releases
+#    https://github.com/docling-project/docling-serve/releases
+# 2. Versionen in der .env hochziehen, dann:
+docker compose pull && docker compose up -d
+```
+
+**Vor größeren Versionssprüngen** ein Backup ziehen (siehe §11): `sudo /srv/scripts/backup.sh` — oder einfach den nächtlichen Backup-Timer abwarten.
+
+---
+
+## 10. HTTPS im LAN
+
+HTTPS im LAN ist mehr als Kosmetik: Ohne Secure Context blockieren Browser den **Mikrofon-Zugriff** — die Sprach-Ein-/Ausgabe von Open WebUI funktioniert über `http://` von anderen Geräten aus schlicht nicht. Außerdem verschwinden die „Nicht sicher"-Warnungen in der Adressleiste, die im Familienbetrieb nur Fragen aufwerfen.
+
+Der Weg mit [mkcert](https://github.com/FiloSottile/mkcert): eine eigene kleine Zertifizierungsstelle (CA) auf dem Docker-Host, die Zertifikate für die drei `.lan`-Namen ausstellt.
+
+**Schritt 1 — CA anlegen und Zertifikat ausstellen** (auf dem Docker-Host):
+
+```bash
+sudo apt install mkcert libnss3-tools
+mkcert -install        # legt die lokale CA an und trägt sie auf DIESEM Rechner ein
+
+# Ein Zertifikat für alle drei Namen:
+mkcert chat.heim.lan ollama.heim.lan ollama-ws.heim.lan
+
+sudo mkdir -p /etc/nginx/certs
+sudo cp chat.heim.lan+2.pem     /etc/nginx/certs/heim-ki.pem
+sudo cp chat.heim.lan+2-key.pem /etc/nginx/certs/heim-ki-key.pem
+```
+
+**Schritt 2 — NGINX auf HTTPS umstellen:** Die fertige Konfiguration liegt unter [`nginx/heim-ki-https.conf`](nginx/heim-ki-https.conf) — sie leitet Port 80 auf 443 um und **ersetzt** die HTTP-Variante:
+
+```bash
+sudo cp nginx/heim-ki-https.conf /etc/nginx/sites-available/
+sudo rm -f /etc/nginx/sites-enabled/heim-ki.conf
+sudo ln -s /etc/nginx/sites-available/heim-ki-https.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**Schritt 3 — CA auf den Familien-Geräten installieren.** Das ist der Preis von LAN-HTTPS: Jedes Gerät muss der eigenen CA einmalig vertrauen. Die CA-Datei liegt unter `$(mkcert -CAROOT)/rootCA.pem` — **nur die `rootCA.pem` verteilen, niemals die `rootCA-key.pem`!**
+
+- **Windows:** Doppelklick auf `rootCA.pem` → *Zertifikat installieren* → Speicherort *Vertrauenswürdige Stammzertifizierungsstellen*.
+- **Android:** Datei aufs Gerät kopieren → *Einstellungen → Sicherheit → Zertifikat installieren (CA-Zertifikat)*.
+- **iOS/iPadOS:** `rootCA.pem` z. B. per AirDrop/Mail öffnen → Profil installieren → zusätzlich unter *Einstellungen → Allgemein → Info → Zertifikatsvertrauen* aktivieren.
+- **macOS/Linux:** in den Schlüsselbund bzw. System-Truststore importieren; Firefox verwaltet seinen eigenen Speicher (*Einstellungen → Zertifikate → Importieren*).
+
+**Alternative:** Wer statt des Host-NGINX lieber [Caddy](https://caddyserver.com) als Container einsetzt, bekommt mit `tls internal` dasselbe automatisch (Caddy bringt seine eigene CA mit) — das Verteilen der CA-Datei auf die Geräte bleibt aber auch dort nötig.
+
+---
+
+## 11. Backup & Restore
+
+Gesichert werden muss, was nicht wiederbeschaffbar ist: das **Open-WebUI-Volume** (Nutzer, Chats, Wissenssammlungen), das **Chroma-Volume** (RAG-Index aus Variante B) und das Indexer-Manifest. Die Ollama-Modelle sind bewusst ausgenommen — die holt `ollama pull` jederzeit neu.
+
+Das Skript [`scripts/backup.sh`](scripts/backup.sh) erledigt genau das (inklusive Aufräumen alter Stände, Standard: 14 Tage) und läuft per systemd-Timer täglich um 3:30 Uhr — nach dem RAG-Indexer:
+
+```bash
+sudo cp scripts/backup.sh /srv/scripts/ && sudo chmod +x /srv/scripts/backup.sh
+sudo cp scripts/systemd/heim-ki-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now heim-ki-backup.timer
+
+# Manuell laufen lassen / Logs:
+sudo systemctl start heim-ki-backup.service
+journalctl -u heim-ki-backup.service
+```
+
+Zielverzeichnis ist `/srv/backups/heim-ki` (per `BACKUP_DIR` änderbar — idealerweise ein NAS-Mount, damit die Sicherung nicht auf derselben Platte liegt wie die Daten).
+
+**Restore** (Beispiel Open-WebUI-Volume; für `chroma-data` analog):
+
+```bash
+docker compose down
+docker run --rm -v open-webui-data:/data -v /srv/backups/heim-ki:/backup alpine \
+  sh -c "rm -rf /data/* && tar xzf /backup/open-webui-data-JJJJ-MM-TT.tar.gz -C /data"
+docker compose up -d
+```
+
+---
+
+## 12. Wake-on-LAN für die Workstation
+
+Damit die Workstation mit der großen GPU nicht durchlaufen muss, weckt man sie bei Bedarf aus dem LAN:
+
+**Einmalig auf der Workstation einrichten:**
+1. Im **BIOS/UEFI** „Wake on LAN" (o. ä.) aktivieren.
+2. In Windows im **Geräte-Manager** beim Netzwerkadapter unter *Energieverwaltung* „Gerät kann den Computer aus dem Ruhezustand aktivieren" und unter *Erweitert* „Wake on Magic Packet" aktivieren.
+3. Den **Windows-Schnellstart deaktivieren** (*Energieoptionen → Auswählen, was beim Drücken von Netzschaltern geschehen soll*) — mit aktivem Schnellstart ist „Herunterfahren" ein Hybrid-Zustand, aus dem WoL oft nicht funktioniert.
+4. Die MAC-Adresse notieren: `ipconfig /all` → „Physische Adresse".
+
+**Wecken vom Docker-Host** mit [`scripts/wol.sh`](scripts/wol.sh):
+
+```bash
+sudo apt install wakeonlan
+./scripts/wol.sh AA:BB:CC:DD:EE:FF
+```
+
+Eine Minute später ist das Workstation-Ollama unter `ollama-ws.heim.lan` verfügbar (die native Windows-App startet automatisch mit). **Tipp:** Eine Fritz!Box kann das auch ohne Skript — in den Gerätedetails unter *Heimnetz → Netzwerk* gibt es den Knopf „Computer starten".
+
+---
+
+## 13. Troubleshooting
+
+| Symptom | Ursache & Abhilfe |
+|---|---|
+| Container sehen die GPU nicht | Test: `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`. Schlägt das fehl: `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`. Nach einem Treiber-Update: Host neu starten. |
+| Antworten plötzlich sehr langsam | `docker exec ollama ollama ps` zeigt, ob das Modell (teilweise) auf der CPU läuft (`XX%/YY% CPU/GPU`). Abhilfe: kleineres/stärker quantisiertes Modell, oder §4-Hinweise (`OLLAMA_MAX_LOADED_MODELS=1`). |
+| Erster Prompt „hängt" | Das Modell wird gerade ins VRAM geladen — bei größeren Modellen dauert das. `OLLAMA_KEEP_ALIVE` (§4) verhindert häufiges Neuladen. |
+| `403 Forbidden` von `ollama.heim.lan` | Host-Header-Schutz von Ollama — die Konfiguration aus §6 sendet deshalb `Host 127.0.0.1:11434`; prüfen, ob wirklich die Repo-Konfiguration aktiv ist (`nginx -T \| grep -A5 ollama`). |
+| Upload scheitert mit `413 Request Entity Too Large` | `client_max_body_size` fehlt/zu klein — in `nginx/heim-ki.conf` enthalten (100 MB), NGINX neu laden. |
+| Docling-Container stürzt ab / Host swappt bei großen PDFs | Docling-OCR ist RAM-hungrig. Große Scans aufteilen, oder dem Service in der Compose-Datei ein `mem_limit` geben; notfalls Dokumente einzeln hochladen. |
+| `ollama-ws.heim.lan` nach Windows-Neustart tot (WSL-Weg) | Die WSL-IP ist gewandert — Portproxy neu setzen oder auf *mirrored networking* bzw. die native App umstellen (§5). |
+| Werkzeug „Heim-Dokumente" findet nichts | Läuft Chroma? (`docker compose ps` → `chroma (healthy)`). Hat der Indexer geschrieben? (`journalctl -u rag-indexer.service`). Stimmen Collection-Name und `chroma_url` in den Valves des Werkzeugs? |
+| Allgemeine Diagnose | `docker compose ps` (Healthchecks!), `docker logs open-webui`, `docker logs ollama`, `nvidia-smi`, `docker stats`. |
+
+---
+
+## 14. Weiterführende Ideen
+
 - **Modell-Empfehlungen für 4 GB VRAM:** `llama3.2:3b`, `qwen2.5:3b`, `phi3:mini` — alle in der [Ollama Library](https://ollama.com/library).
+- **Zugriff von unterwegs:** Statt Portfreigaben ein VPN ins Heimnetz — die Fritz!Box kann WireGuard direkt, alternativ [Tailscale](https://tailscale.com). So bleibt die Heim-KI auch unterwegs erreichbar, ohne dass irgendetwas im Internet exponiert wird.
+- **Automatische Update-Benachrichtigungen:** z. B. Watchtower im Monitor-Modus (`WATCHTOWER_MONITOR_ONLY=true`), damit Updates gemeldet, aber bewusst eingespielt werden (§9).
 
 ## Quellenübersicht
 
@@ -370,5 +520,6 @@ crontab -e
 | Docling Serve | https://github.com/docling-project/docling-serve |
 | ChromaDB | https://www.trychroma.com |
 | NGINX Reverse Proxy | https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/ |
+| mkcert | https://github.com/FiloSottile/mkcert |
 | NVIDIA Container Toolkit | https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html |
 | WSL2 | https://learn.microsoft.com/de-de/windows/wsl/install |

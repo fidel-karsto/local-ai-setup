@@ -1,0 +1,11 @@
+[Unit]
+Description=Nächtlicher Lauf des RAG-Indexers (2 Uhr)
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+# Verpasste Läufe nachholen (z. B. wenn der Host nachts aus war):
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

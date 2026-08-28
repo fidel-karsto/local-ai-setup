@@ -1,0 +1,12 @@
+[Unit]
+Description=Backup der Heim-KI-Daten (Open-WebUI- und Chroma-Volume)
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/srv/scripts/backup.sh
+Nice=10
+# Konfiguration bei Bedarf (Defaults siehe Skript-Kopf):
+# Environment=BACKUP_DIR=/srv/backups/heim-ki
+# Environment=KEEP_DAYS=14
