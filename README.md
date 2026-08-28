@@ -5,7 +5,7 @@
 > Basierend auf einem Setup von Matthias Kallenbach (LinkedIn-Post). Ziel: Eine ChatGPT-ähnliche Oberfläche für alle im Haushalt („Mama kann auch die Heim-KI benutzen"), bei der **keine Daten das eigene Netzwerk verlassen**.
 
 **Dieses Repo enthält neben dem Tutorial die fertigen Konfigurationsdateien:**
-[`docker-compose.yml`](docker-compose.yml) · [`.env.example`](.env.example) · [`nginx/heim-ki.conf`](nginx/heim-ki.conf) · [`scripts/rag-indexer.py`](scripts/rag-indexer.py)
+[`docker-compose.yml`](docker-compose.yml) · [`.env.example`](.env.example) · [`nginx/heim-ki.conf`](nginx/heim-ki.conf) · [`scripts/rag-indexer.py`](scripts/rag-indexer.py) · [`scripts/systemd/`](scripts/systemd) · [`tools/heim_docs_suche.py`](tools/heim_docs_suche.py)
 
 ---
 
@@ -313,53 +313,57 @@ Ein Port-Mapping braucht Docling nicht: Open WebUI erreicht den Container über 
 - Open WebUI RAG-Doku: https://docs.openwebui.com/features/rag
 - Docling Serve: https://github.com/docling-project/docling-serve
 
-### Variante B: Eigene Pipeline als nächtlicher Batch-Job
+### Variante B: Eigene Pipeline als nächtlicher Batch-Job (mit Suche als Open-WebUI-Tool)
 
-> ⚠️ **Ohne Retrieval-Anbindung unvollständig:** Dieses Skript befüllt eine *eigene* ChromaDB unter `/srv/chroma`. Open WebUI fragt diese Datenbank **nicht** automatisch ab — es nutzt seine interne Vektordatenbank und sieht den Nachtindex nie. Damit die Chats den Index tatsächlich nutzen, braucht es zusätzlich ein Open-WebUI-Tool oder eine kleine Retrieval-API (geplant — siehe [`REVIEW-UND-PLAN.md`](REVIEW-UND-PLAN.md), Phase 3). Wer einfach „Dokumente rein, Fragen stellen" will, nimmt **Variante A**.
+Wer es wie im Post als eigenständigen Nachtjob bauen will (z. B. um einen ganzen Ordner automatisch zu indexieren), bekommt hier die komplette Kette — inklusive des Teils, der im Post fehlte: der **Anbindung an die Chats**. Die Architektur:
 
-Wer es wie im Post als eigenständigen Nachtjob bauen will (z. B. um einen ganzen Ordner automatisch zu indexieren), nutzt das Skript [`scripts/rag-indexer.py`](scripts/rag-indexer.py) aus diesem Repo:
+```
+/srv/dokumente ──► rag-indexer.py ──► ChromaDB-Server ◄── Open-WebUI-Tool
+                   (Host, nachts       (Container,         "Heim-Dokumente
+                    per systemd-        Profil "rag")       durchsuchen"
+                    Timer)                                  (im Chat)
+```
+
+**1. ChromaDB-Server starten:** Der Container ist in der [`docker-compose.yml`](docker-compose.yml) enthalten — im eigenen Profil `rag-batch`, denn Variante B braucht Chroma, aber nicht den Docling-Server aus Variante A:
 
 ```bash
-pip install docling chromadb ollama
+docker compose --profile rag-batch up -d
 ```
 
-```python
-#!/usr/bin/env python3
-"""Nächtlicher RAG-Indexer: Docling -> bge-m3 (Ollama) -> ChromaDB"""
-from pathlib import Path
-import chromadb
-import ollama
-from docling.document_converter import DocumentConverter
-from docling.chunking import HybridChunker
+Der Indexer auf dem Host erreicht ihn unter `127.0.0.1:8000`, das Open-WebUI-Tool über das Compose-Netz unter `http://chroma:8000`.
 
-DOCS_DIR = Path("/srv/dokumente")           # hier fliegen die Docs rum
-client = chromadb.PersistentClient(path="/srv/chroma")
-collection = client.get_or_create_collection("heim-docs")
-converter = DocumentConverter()
-chunker = HybridChunker()
-
-for f in DOCS_DIR.rglob("*"):
-    if f.suffix.lower() not in {".pdf", ".docx", ".pptx", ".html", ".md"}:
-        continue
-    doc = converter.convert(f).document          # Docling: Datei -> Struktur
-    for i, chunk in enumerate(chunker.chunk(doc)):
-        text = chunk.text
-        emb = ollama.embed(model="bge-m3", input=text)["embeddings"][0]
-        collection.upsert(
-            ids=[f"{f.name}-{i}"],
-            embeddings=[emb],
-            documents=[text],
-            metadatas=[{"quelle": str(f)}],
-        )
-    print(f"Indexiert: {f.name}")
-```
-
-Als Cronjob nachts um 2 Uhr laufen lassen:
+**2. Indexer einrichten** ([`scripts/rag-indexer.py`](scripts/rag-indexer.py)) — mit eigenem venv, damit der Zeitplan-Aufruf dieselbe Umgebung nutzt wie die Installation:
 
 ```bash
-crontab -e
-# 0 2 * * * /usr/bin/python3 /srv/scripts/rag-indexer.py >> /var/log/rag-indexer.log 2>&1
+sudo mkdir -p /srv/scripts /srv/dokumente
+sudo cp scripts/rag-indexer.py scripts/requirements.txt /srv/scripts/
+python3 -m venv /srv/scripts/.venv
+/srv/scripts/.venv/bin/pip install -r /srv/scripts/requirements.txt
+
+# Testlauf (Dokumente vorher nach /srv/dokumente legen):
+/srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py
 ```
+
+Das Skript ist auf Dauerbetrieb ausgelegt: Es überspringt unveränderte Dateien (SHA-256-Manifest in `/srv/rag-index-state.json`), entfernt die Chunks gelöschter oder geänderter Dateien, bettet Chunks *mit* Überschriften-Kontext ein (`chunker.contextualize`) und bricht bei einer kaputten Datei nicht den ganzen Lauf ab. Pfade und URLs sind per Umgebungsvariablen konfigurierbar (siehe Skript-Kopf).
+
+**3. Nächtlich laufen lassen** — als systemd-Timer ([`scripts/systemd/`](scripts/systemd/)); der holt dank `Persistent=true` auch verpasste Läufe nach, und die Logs landen im journald:
+
+```bash
+sudo cp scripts/systemd/rag-indexer.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now rag-indexer.timer
+
+# Logs ansehen:
+journalctl -u rag-indexer.service
+```
+
+(Wer lieber Cron mag: `0 2 * * * /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py >> /var/log/rag-indexer.log 2>&1`)
+
+**4. Suche in Open WebUI anbinden:** Den Inhalt von [`tools/heim_docs_suche.py`](tools/heim_docs_suche.py) in Open WebUI unter *Arbeitsbereich → Werkzeuge → +* als neues Werkzeug einfügen und speichern. Anschließend das Werkzeug beim gewünschten Modell aktivieren (*Admin-Einstellungen → Modelle → Modell bearbeiten → Werkzeuge*) oder im Chat über das ⊕-Menü zuschalten. URLs, Collection und Trefferanzahl lassen sich über die *Ventile* (Valves) des Werkzeugs anpassen.
+
+**5. Benutzen:** Im Chat einfach nach Inhalten der eigenen Dokumente fragen („Was steht in meinem Mietvertrag zur Kündigungsfrist?") — das Modell ruft das Werkzeug auf, das die passenden Textstellen samt Quellenangabe aus dem Nachtindex holt.
+
+> **Hinweis:** Variante B nutzt bewusst *nicht* Docling-Serve aus Variante A, sondern die Docling-Python-Bibliothek direkt im Indexer — deshalb das getrennte Compose-Profil: `rag` startet Docling (Variante A), `rag-batch` startet Chroma (Variante B). Beide Varianten lassen sich auch parallel betreiben.
 
 **Quellen:**
 - Docling Doku: https://docling-project.github.io/docling/

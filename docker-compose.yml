@@ -88,6 +88,34 @@ services:
       retries: 5
       start_period: 120s
 
+  # Vektordatenbank für die eigene RAG-Pipeline (README §7, Variante B).
+  # Der Indexer auf dem Host schreibt über 127.0.0.1:8000, das Open-WebUI-Tool
+  # (tools/heim_docs_suche.py) liest über das Compose-Netz (http://chroma:8000).
+  # Eigenes Profil "rag-batch": Variante B braucht Chroma, aber kein Docling.
+  chroma:
+    image: ${CHROMA_IMAGE:-chromadb/chroma:1.5.9}
+    container_name: chroma
+    restart: unless-stopped
+    profiles: ["rag-batch"]
+    environment:
+      - ANONYMIZED_TELEMETRY=false
+    volumes:
+      - chroma-data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      # TCP-Check via bash, Fallback curl — je nachdem, was das Image mitbringt
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'cat < /dev/null > /dev/tcp/localhost/8000' || curl -fsS http://localhost:8000/api/v2/heartbeat",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
 volumes:
   ollama-data:
   open-webui-data:
+  chroma-data:

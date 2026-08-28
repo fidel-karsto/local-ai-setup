@@ -6,6 +6,15 @@ notwendigen und sinnvollen Ergänzungen.
 
 Stand: 2026-08-28 · Bezug: `README.md` auf `main` (dcf46be)
 
+> **Umsetzungsstatus:**
+> - ✅ **Phase 1** (README-Korrekturen) — umgesetzt
+> - ✅ **Phase 2** (Repo als ausführbares Setup) — umgesetzt
+> - ✅ **Phase 3** (Indexer v2 + Retrieval-Anbindung) — umgesetzt als **Variante B1**:
+>   ChromaDB-Server im Compose-Profil `rag-batch`, gehärteter Indexer
+>   (`scripts/rag-indexer.py`) mit systemd-Timer (`scripts/systemd/`),
+>   Open-WebUI-Tool `tools/heim_docs_suche.py` für die Suche im Chat
+> - ⬜ **Phase 4** (HTTPS, Backup, WoL, Troubleshooting) — offen
+
 ---
 
 ## Teil 1: Review-Ergebnis

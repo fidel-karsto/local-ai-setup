@@ -1,0 +1,15 @@
+[Unit]
+Description=RAG-Indexer: Docling -> bge-m3 (Ollama) -> ChromaDB
+# Ollama- und Chroma-Container müssen laufen:
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py
+Nice=10
+# Konfiguration bei Bedarf (Defaults siehe Skript-Kopf):
+# Environment=DOCS_DIR=/srv/dokumente
+# Environment=STATE_FILE=/srv/rag-index-state.json
+# Environment=CHROMA_URL=http://127.0.0.1:8000
+# Environment=OLLAMA_URL=http://127.0.0.1:11434
