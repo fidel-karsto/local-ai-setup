@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- macOS-Pendant zum systemd-Timer (README §11):
+     tägliches Backup um 3:30 Uhr, nach dem RAG-Indexer.
+     Installation:
+       sudo cp scripts/launchd/de.heim-ki.backup.plist /Library/LaunchDaemons/
+       sudo launchctl load -w /Library/LaunchDaemons/de.heim-ki.backup.plist -->
+<dict>
+    <key>Label</key>
+    <string>de.heim-ki.backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/opt/heim-ki/scripts/backup.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- docker liegt unter macOS in /opt/homebrew/bin bzw. /usr/local/bin -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>BACKUP_DIR</key>
+        <string>/opt/heim-ki/backups</string>
+        <key>STATE_FILE</key>
+        <string>/opt/heim-ki/rag-index-state.json</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/opt/heim-ki/logs/backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/heim-ki/logs/backup.log</string>
+</dict>
+</plist>

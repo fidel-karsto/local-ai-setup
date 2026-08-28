@@ -18,6 +18,11 @@ Stand: 2026-08-28 · Bezug: `README.md` auf `main` (dcf46be)
 >   (`scripts/backup.sh` + systemd-Timer, README §11), Wake-on-LAN
 >   (`scripts/wol.sh`, README §12), Troubleshooting-Kapitel (README §13);
 >   Compose-Volumes mit festen Namen für eindeutiges Backup/Restore
+> - ✅ **Nachtrag: macOS-Variante** — der Docker-Host und die Workstation können
+>   auch ein Apple-Silicon-Mac sein: Ollama nativ (Container haben unter macOS
+>   keinen GPU-Zugriff), Rest über `docker-compose.macos.yml`; launchd-Units
+>   (`scripts/launchd/`) als Pendant zu den systemd-Timern; NGINX/mkcert/WoL
+>   per Homebrew; Pfade unter `/opt/heim-ki` statt `/srv`
 
 ---
 

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- macOS-Pendant zum systemd-Timer (README §7, Variante B):
+     nächtlicher RAG-Indexer um 2:00 Uhr.
+     Installation:
+       sudo cp scripts/launchd/de.heim-ki.rag-indexer.plist /Library/LaunchDaemons/
+       sudo launchctl load -w /Library/LaunchDaemons/de.heim-ki.rag-indexer.plist
+     Verpasste Läufe werden beim Aufwachen aus dem Ruhezustand nachgeholt,
+     nicht aber nach einem kompletten Shutdown. -->
+<dict>
+    <key>Label</key>
+    <string>de.heim-ki.rag-indexer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/heim-ki/scripts/.venv/bin/python</string>
+        <string>/opt/heim-ki/scripts/rag-indexer.py</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DOCS_DIR</key>
+        <string>/opt/heim-ki/dokumente</string>
+        <key>STATE_FILE</key>
+        <string>/opt/heim-ki/rag-index-state.json</string>
+        <key>CHROMA_URL</key>
+        <string>http://127.0.0.1:8000</string>
+        <key>OLLAMA_URL</key>
+        <string>http://127.0.0.1:11434</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/opt/heim-ki/logs/rag-indexer.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/heim-ki/logs/rag-indexer.log</string>
+</dict>
+</plist>
