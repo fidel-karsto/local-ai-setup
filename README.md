@@ -114,7 +114,7 @@ Auf dem Mac entfällt der ganze Toolkit-Teil — dafür gilt eine andere Grundre
 
 ```bash
 brew install ollama
-brew services start ollama    # startet Ollama als Dienst, auch nach Reboot
+brew services start ollama    # startet Ollama als Dienst bei jedem Login
 ```
 
 Docker Desktop (oder OrbStack) installieren und starten — mehr Vorbereitung braucht es nicht. Der Test hier ist schlicht:
@@ -122,6 +122,14 @@ Docker Desktop (oder OrbStack) installieren und starten — mehr Vorbereitung br
 ```bash
 ollama run llama3.2:3b "Sag Hallo"    # antwortet flott? Metal läuft.
 ```
+
+> ⚠️ **Unbeaufsichtigter Betrieb (24/7-Host, z. B. headless Mac mini):** Anders als systemd-Dienste unter Linux hängen auf dem Mac *alle* Bausteine an einer angemeldeten Nutzer-Session: `brew services start ollama` (ohne sudo) legt einen LaunchAgent an, der erst beim **Login** startet — nicht beim Boot —, und Docker Desktop/OrbStack laufen ebenfalls nur innerhalb einer Session. Nach einem Neustart (Stromausfall, Update) ohne Anmeldung ist die Heim-KI sonst tot. Deshalb einmalig einrichten:
+>
+> 1. **Automatische Anmeldung** aktivieren: *Systemeinstellungen → Benutzer & Gruppen → Automatisch anmelden* (geht nicht bei aktiviertem FileVault).
+> 2. **Docker Desktop/OrbStack beim Login starten** lassen (Einstellung „Start at login").
+> 3. **Ruhezustand deaktivieren** — ein schlafender Mac beantwortet keine Anfragen und führt keine Nachtjobs aus: `sudo pmset -a sleep 0 disksleep 0`. Praktisch außerdem: `sudo pmset -a autorestart 1` (automatischer Neustart nach Stromausfall).
+>
+> Auch die Nachtjobs aus §7/§11 laufen aus genau diesem Grund als LaunchAgents in der Nutzer-Session, nicht als root-Daemons.
 
 ---
 
@@ -192,7 +200,7 @@ ollama pull llama3.2:3b
 ollama pull bge-m3
 ```
 
-Die Hinweise oben zu **Erster Login & Registrierung** gelten unverändert. Statt der VRAM-Klimmzüge gilt auf dem Mac die Unified-Memory-Faustregel: macOS gönnt den Modellen grob bis zu ~⅔ des RAM — auf einem 16-GB-Mac laufen `llama3.2:3b` und `bge-m3` bequem nebeneinander, sogar 7B–8B-Modelle sind drin. Wer `OLLAMA_KEEP_ALIVE` o. ä. setzen will, macht das fürs native Ollama per `launchctl setenv OLLAMA_KEEP_ALIVE 30m` (und startet Ollama danach neu). Und weil Ollama nativ standardmäßig nur an `127.0.0.1` lauscht, gilt dieselbe Sicherheitslogik wie unter Linux: Der NGINX aus §6 ist der einzige Eingang aus dem LAN.
+Die Hinweise oben zu **Erster Login & Registrierung** gelten unverändert. Statt der VRAM-Klimmzüge gilt auf dem Mac die Unified-Memory-Faustregel: macOS gönnt den Modellen grob bis zu ~⅔ des RAM — auf einem 16-GB-Mac laufen `llama3.2:3b` und `bge-m3` bequem nebeneinander, sogar 7B–8B-Modelle sind drin. Wer `OLLAMA_KEEP_ALIVE` o. ä. setzen will: `launchctl setenv OLLAMA_KEEP_ALIVE 30m` (danach `brew services restart ollama`) wirkt sofort, ist aber nach einem Neustart stillschweigend wieder weg — dauerhaft verdrahtet man solche Variablen in einem eigenen LaunchAgent statt über `brew services` (Vorlage: [`scripts/launchd/de.heim-ki.ollama-ws.plist`](scripts/launchd/de.heim-ki.ollama-ws.plist), dort `OLLAMA_HOST` weglassen bzw. ersetzen). Und weil Ollama nativ standardmäßig nur an `127.0.0.1` lauscht, gilt dieselbe Sicherheitslogik wie unter Linux: Der NGINX aus §6 ist der einzige Eingang aus dem LAN.
 
 **Quellen:**
 - Ollama Docker-Image: https://hub.docker.com/r/ollama/ollama
@@ -216,17 +224,18 @@ Fertig — kein WSL, kein Portproxy, und Ollama startet automatisch mit Windows.
 
 ### macOS: Mac als Workstation
 
-Ein Mac (z. B. ein MacBook Pro mit viel RAM) funktioniert genauso gut als On-demand-Workstation:
+Ein Mac (z. B. ein MacBook Pro mit viel RAM) funktioniert genauso gut als On-demand-Workstation. Damit Ollama aus dem LAN erreichbar ist (nicht nur von localhost), muss `OLLAMA_HOST=0.0.0.0:11434` gesetzt sein — und zwar so, dass es Neustarts überlebt. `launchctl setenv` plus `brew services` ist dafür *nicht* verlässlich: brew services generiert seine Job-Definition bei jedem Restart/Upgrade neu, und per `launchctl` gesetzte Variablen sind nach einem Reboot weg — Ollama lauscht dann wieder still nur auf `127.0.0.1`, ohne dass auf der Workstation irgendetwas fehlschlägt. Deshalb liegt in diesem Repo ein fertiger LaunchAgent mit fest verdrahtetem `OLLAMA_HOST` ([`scripts/launchd/de.heim-ki.ollama-ws.plist`](scripts/launchd/de.heim-ki.ollama-ws.plist)):
 
 ```bash
-brew install ollama
+brew install ollama    # nur die Binärdatei — KEIN "brew services start ollama" dazu,
+                       # sonst streiten sich zwei Instanzen um Port 11434
 
-# Ollama soll aus dem LAN erreichbar sein (nicht nur localhost):
-launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
-brew services restart ollama
+mkdir -p ~/Library/LaunchAgents
+cp scripts/launchd/de.heim-ki.ollama-ws.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/de.heim-ki.ollama-ws.plist
 ```
 
-(Alternativ die [Ollama-App für macOS](https://ollama.com/download/mac) installieren — auch sie liest `OLLAMA_HOST` aus `launchctl setenv`; nach dem Setzen die App neu starten.) Fragt die macOS-Firewall beim ersten eingehenden Zugriff nach, „eingehende Verbindungen erlauben" bestätigen. Damit die Einstellung einen Neustart überlebt, den `launchctl setenv`-Aufruf z. B. als Login-Objekt oder LaunchAgent hinterlegen — oder schlicht einmal nach jedem Neustart ausführen, wenn der Mac ohnehin nur „on demand" läuft.
+Damit startet Ollama bei jedem Login LAN-erreichbar. Fragt die macOS-Firewall beim ersten eingehenden Zugriff nach, „eingehende Verbindungen erlauben" bestätigen. (Wer stattdessen die [Ollama-App für macOS](https://ollama.com/download/mac) nutzt: Die liest `launchctl setenv OLLAMA_HOST "0.0.0.0:11434"` aus — das ist der von Ollama dokumentierte Weg für die App, muss aber nach jedem Neustart erneut gesetzt werden, bevor die App startet.)
 
 **Achtung Ruhezustand:** Ein zugeklapptes MacBook schläft — und ein schlafender Mac beantwortet keine Ollama-Anfragen. Für den Workstation-Einsatz den Ruhezustand am Netzteil deaktivieren (*Systemeinstellungen → Energie*, „Ruhezustand des Computers verhindern") oder `caffeinate` nutzen.
 
@@ -412,21 +421,27 @@ Der Indexer auf dem Host erreicht ihn unter `127.0.0.1:8000`, das Open-WebUI-Too
 # Linux:
 sudo mkdir -p /srv/scripts /srv/dokumente
 sudo cp scripts/rag-indexer.py scripts/requirements.txt /srv/scripts/
+sudo chown -R "$USER" /srv/scripts /srv/dokumente   # sonst scheitern venv-Anlage,
+                                                    # Testlauf und Dokumente-Ablegen
 python3 -m venv /srv/scripts/.venv
 /srv/scripts/.venv/bin/pip install -r /srv/scripts/requirements.txt
 
-# Testlauf (Dokumente vorher nach /srv/dokumente legen):
-/srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py
+# Testlauf (Dokumente vorher nach /srv/dokumente legen; mit sudo, weil das
+# Manifest /srv/rag-index-state.json angelegt wird — wie später beim Timer):
+sudo /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py
 ```
 
 ```bash
-# macOS (Pfade analog, plus Log-Verzeichnis für launchd):
-sudo mkdir -p /opt/heim-ki/scripts /opt/heim-ki/dokumente /opt/heim-ki/logs
-sudo cp scripts/rag-indexer.py scripts/requirements.txt /opt/heim-ki/scripts/
+# macOS (Pfade analog, plus Log- und Backup-Verzeichnis für die launchd-Jobs;
+# alles gehört danach dem eingeloggten Nutzer, denn die Jobs laufen als
+# LaunchAgents in dessen Session — siehe §3, "Unbeaufsichtigter Betrieb"):
+sudo mkdir -p /opt/heim-ki/scripts /opt/heim-ki/dokumente /opt/heim-ki/logs /opt/heim-ki/backups
+sudo chown -R "$USER" /opt/heim-ki
+cp scripts/rag-indexer.py scripts/requirements.txt /opt/heim-ki/scripts/
 python3 -m venv /opt/heim-ki/scripts/.venv
 /opt/heim-ki/scripts/.venv/bin/pip install -r /opt/heim-ki/scripts/requirements.txt
 
-# Testlauf:
+# Testlauf (Dokumente vorher nach /opt/heim-ki/dokumente legen):
 DOCS_DIR=/opt/heim-ki/dokumente STATE_FILE=/opt/heim-ki/rag-index-state.json \
   /opt/heim-ki/scripts/.venv/bin/python /opt/heim-ki/scripts/rag-indexer.py
 ```
@@ -448,17 +463,18 @@ journalctl -u rag-indexer.service
 
 (Wer lieber Cron mag: `0 2 * * * /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py >> /var/log/rag-indexer.log 2>&1`)
 
-*macOS* — als launchd-Job ([`scripts/launchd/`](scripts/launchd/)); die Pfade in der plist passen zu `/opt/heim-ki`:
+*macOS* — als launchd-Job ([`scripts/launchd/`](scripts/launchd/)); die Pfade in der plist passen zu `/opt/heim-ki`. Der Job läuft bewusst als **LaunchAgent in der Nutzer-Session** (nicht als root-Daemon), denn er braucht um 2:00 Uhr das native Ollama und den Chroma-Container — und beide existieren nur in einer angemeldeten Session mit laufendem Docker Desktop/OrbStack (→ §3, „Unbeaufsichtigter Betrieb": automatische Anmeldung + „Start at login" einrichten, sonst läuft der Index nachts ins Leere):
 
 ```bash
-sudo cp scripts/launchd/de.heim-ki.rag-indexer.plist /Library/LaunchDaemons/
-sudo launchctl load -w /Library/LaunchDaemons/de.heim-ki.rag-indexer.plist
+mkdir -p ~/Library/LaunchAgents
+cp scripts/launchd/de.heim-ki.rag-indexer.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/de.heim-ki.rag-indexer.plist
 
 # Logs ansehen:
 tail -f /opt/heim-ki/logs/rag-indexer.log
 ```
 
-(launchd holt einen verpassten Lauf nach, wenn der Mac zur geplanten Zeit nur geschlafen hat — nach einem kompletten Shutdown allerdings nicht.)
+(launchd holt einen verpassten Lauf nach, wenn der Mac zur geplanten Zeit nur geschlafen hat — nach einem kompletten Shutdown oder ohne angemeldete Session allerdings nicht.)
 
 **4. Suche in Open WebUI anbinden:** Den Inhalt von [`tools/heim_docs_suche.py`](tools/heim_docs_suche.py) in Open WebUI unter *Arbeitsbereich → Werkzeuge → +* als neues Werkzeug einfügen und speichern. Anschließend das Werkzeug beim gewünschten Modell aktivieren (*Admin-Einstellungen → Modelle → Modell bearbeiten → Werkzeuge*) oder im Chat über das ⊕-Menü zuschalten. URLs, Collection und Trefferanzahl lassen sich über die *Ventile* (Valves) des Werkzeugs anpassen.
 
@@ -495,7 +511,7 @@ docker compose pull && docker compose up -d
 #  aktualisiert Homebrew: brew upgrade ollama)
 ```
 
-**Vor größeren Versionssprüngen** ein Backup ziehen (siehe §11): `sudo /srv/scripts/backup.sh` (macOS: `sudo /opt/heim-ki/scripts/backup.sh`) — oder einfach den nächtlichen Backup-Timer abwarten.
+**Vor größeren Versionssprüngen** ein Backup ziehen (siehe §11): `sudo /srv/scripts/backup.sh` (macOS: `BACKUP_DIR=/opt/heim-ki/backups STATE_FILE=/opt/heim-ki/rag-index-state.json /opt/heim-ki/scripts/backup.sh` — ohne sudo, denn als root sähe die docker-CLI den Docker-Desktop-Daemon nicht) — oder einfach den nächtlichen Backup-Timer abwarten.
 
 ---
 
@@ -516,9 +532,15 @@ mkcert -install        # legt die lokale CA an und trägt sie auf DIESEM Rechner
 # Ein Zertifikat für alle drei Namen:
 mkcert chat.heim.lan ollama.heim.lan ollama-ws.heim.lan
 
+# Linux:
 sudo mkdir -p /etc/nginx/certs
 sudo cp chat.heim.lan+2.pem     /etc/nginx/certs/heim-ki.pem
 sudo cp chat.heim.lan+2-key.pem /etc/nginx/certs/heim-ki-key.pem
+
+# macOS (Homebrew-NGINX):
+sudo mkdir -p /opt/homebrew/etc/nginx/certs
+sudo cp chat.heim.lan+2.pem     /opt/homebrew/etc/nginx/certs/heim-ki.pem
+sudo cp chat.heim.lan+2-key.pem /opt/homebrew/etc/nginx/certs/heim-ki-key.pem
 ```
 
 **Schritt 2 — NGINX auf HTTPS umstellen:** Die fertige Konfiguration liegt unter [`nginx/heim-ki-https.conf`](nginx/heim-ki-https.conf) — sie leitet Port 80 auf 443 um und **ersetzt** die HTTP-Variante:
@@ -557,6 +579,7 @@ Das Skript [`scripts/backup.sh`](scripts/backup.sh) erledigt genau das (inklusiv
 *Linux* — per systemd-Timer:
 
 ```bash
+sudo mkdir -p /srv/scripts    # existiert schon, falls §7 Variante B eingerichtet wurde
 sudo cp scripts/backup.sh /srv/scripts/ && sudo chmod +x /srv/scripts/backup.sh
 sudo cp scripts/systemd/heim-ki-backup.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -567,14 +590,20 @@ sudo systemctl start heim-ki-backup.service
 journalctl -u heim-ki-backup.service
 ```
 
-*macOS* — per launchd-Job ([`scripts/launchd/de.heim-ki.backup.plist`](scripts/launchd/de.heim-ki.backup.plist), Ziel `/opt/heim-ki/backups`):
+*macOS* — per launchd-Job ([`scripts/launchd/de.heim-ki.backup.plist`](scripts/launchd/de.heim-ki.backup.plist), Ziel `/opt/heim-ki/backups`). Auch dieser Job läuft als **LaunchAgent in der Nutzer-Session**, denn die docker-CLI erreicht den Daemon von Docker Desktop/OrbStack nur dort (der Socket liegt unter `~/.docker/run/docker.sock`, nicht unter `/var/run/docker.sock`). Ist Docker nachts nicht erreichbar, bricht `backup.sh` mit Fehler ab, statt still ein leeres Backup zu schreiben — für zuverlässige Nachtläufe also §3, „Unbeaufsichtigter Betrieb" einrichten:
 
 ```bash
-sudo cp scripts/backup.sh /opt/heim-ki/scripts/ && sudo chmod +x /opt/heim-ki/scripts/backup.sh
-sudo cp scripts/launchd/de.heim-ki.backup.plist /Library/LaunchDaemons/
-sudo launchctl load -w /Library/LaunchDaemons/de.heim-ki.backup.plist
+# Verzeichnisse existieren schon, falls §7 Variante B eingerichtet wurde — sonst:
+sudo mkdir -p /opt/heim-ki/scripts /opt/heim-ki/logs /opt/heim-ki/backups
+sudo chown -R "$USER" /opt/heim-ki
 
-# Logs:
+cp scripts/backup.sh /opt/heim-ki/scripts/ && chmod +x /opt/heim-ki/scripts/backup.sh
+mkdir -p ~/Library/LaunchAgents
+cp scripts/launchd/de.heim-ki.backup.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/de.heim-ki.backup.plist
+
+# Manuell laufen lassen / Logs:
+launchctl start de.heim-ki.backup
 tail -f /opt/heim-ki/logs/backup.log
 ```
 
@@ -612,7 +641,7 @@ brew install wakeonlan         # macOS-Host
 ./scripts/wol.sh AA:BB:CC:DD:EE:FF
 ```
 
-Eine Minute später ist das Workstation-Ollama unter `ollama-ws.heim.lan` verfügbar (die native App startet unter Windows automatisch mit; auf dem Mac sorgt `brew services` bzw. die Ollama-App im Anmeldeobjekt dafür). **Tipp:** Eine Fritz!Box kann das auch ohne Skript — in den Gerätedetails unter *Heimnetz → Netzwerk* gibt es den Knopf „Computer starten".
+Eine Minute später ist das Workstation-Ollama unter `ollama-ws.heim.lan` verfügbar (die native App startet unter Windows automatisch mit; auf dem Mac sorgt der LaunchAgent aus §5 dafür). **Tipp:** Eine Fritz!Box kann das auch ohne Skript — in den Gerätedetails unter *Heimnetz → Netzwerk* gibt es den Knopf „Computer starten".
 
 ---
 
@@ -627,10 +656,11 @@ Eine Minute später ist das Workstation-Ollama unter `ollama-ws.heim.lan` verfü
 | Upload scheitert mit `413 Request Entity Too Large` | `client_max_body_size` fehlt/zu klein — in `nginx/heim-ki.conf` enthalten (100 MB), NGINX neu laden. |
 | Docling-Container stürzt ab / Host swappt bei großen PDFs | Docling-OCR ist RAM-hungrig. Große Scans aufteilen, oder dem Service in der Compose-Datei ein `mem_limit` geben; notfalls Dokumente einzeln hochladen. |
 | `ollama-ws.heim.lan` nach Windows-Neustart tot (WSL-Weg) | Die WSL-IP ist gewandert — Portproxy neu setzen oder auf *mirrored networking* bzw. die native App umstellen (§5). |
-| Werkzeug „Heim-Dokumente" findet nichts | Läuft Chroma? (`docker compose ps` → `chroma (healthy)`). Hat der Indexer geschrieben? (Linux: `journalctl -u rag-indexer.service`, macOS: `/opt/heim-ki/logs/rag-indexer.log`). Stimmen Collection-Name und `chroma_url` in den Valves des Werkzeugs? |
+| Werkzeug „Heim-Dokumente" findet nichts | Läuft Chroma? (`docker ps` → `chroma (healthy)`; ein bloßes `docker compose ps` zeigt Profil-Dienste wie `chroma` nur mit `--profile rag-batch` — und auf macOS nur mit `-f docker-compose.macos.yml`). Hat der Indexer geschrieben? (Linux: `journalctl -u rag-indexer.service`, macOS: `/opt/heim-ki/logs/rag-indexer.log`). Stimmen Collection-Name und `chroma_url` in den Valves des Werkzeugs? |
 | macOS: Ollama quälend langsam, Mac-Lüfter dreht | Läuft Ollama versehentlich als Container? Unter macOS haben Container **keinen GPU-Zugriff** — Ollama muss nativ laufen (`brew services start ollama`, §3) und Open WebUI über `docker-compose.macos.yml` auf `host.docker.internal:11434` zeigen. |
 | macOS: Open WebUI erreicht Ollama nicht | Läuft das native Ollama? (`ollama ps`, `brew services list`). In den Open-WebUI-*Verbindungen* muss `http://host.docker.internal:11434` stehen, nicht `http://ollama:11434` — den Ollama-Service-Namen gibt es in der macOS-Compose-Datei nicht. |
-| Allgemeine Diagnose | `docker compose ps` (Healthchecks!), `docker logs open-webui`, `docker logs ollama`, `nvidia-smi`, `docker stats`. |
+| macOS: Nachtjobs (Indexer/Backup) sind nicht gelaufen | Die Jobs laufen als LaunchAgents nur in einer **angemeldeten Session** mit laufendem Docker Desktop/OrbStack und wachem Mac — §3, „Unbeaufsichtigter Betrieb" (Auto-Login, „Start at login", `pmset`). Status: `launchctl list \| grep heim-ki`; Logs: `/opt/heim-ki/logs/*.log`. |
+| Allgemeine Diagnose | `docker compose ps` (Healthchecks!; macOS: mit `-f docker-compose.macos.yml`, Profil-Dienste zusätzlich mit `--profile rag`/`rag-batch` — oder einfach `docker ps`), `docker logs open-webui`, `docker stats`; nur Linux: `docker logs ollama`, `nvidia-smi` (macOS: Ollama nativ → `ollama ps`, Logs von `brew services`). |
 
 ---
 

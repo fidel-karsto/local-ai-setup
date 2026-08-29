@@ -3,11 +3,21 @@
 <plist version="1.0">
 <!-- macOS-Pendant zum systemd-Timer (README §7, Variante B):
      nächtlicher RAG-Indexer um 2:00 Uhr.
-     Installation:
-       sudo cp scripts/launchd/de.heim-ki.rag-indexer.plist /Library/LaunchDaemons/
-       sudo launchctl load -w /Library/LaunchDaemons/de.heim-ki.rag-indexer.plist
+
+     Bewusst ein LaunchAgent (Nutzer-Session), KEIN LaunchDaemon: Der Indexer
+     braucht das native Ollama (brew services, startet beim Login) und den
+     Chroma-Container (Docker Desktop/OrbStack laufen nur in einer angemeldeten
+     Session). Ein root-Daemon liefe nachts ins Leere. Für den Betrieb ohne
+     angesteckten Monitor: automatische Anmeldung aktivieren — siehe README §3,
+     "Unbeaufsichtigter Betrieb".
+
+     Installation (ohne sudo):
+       mkdir -p ~/Library/LaunchAgents
+       cp scripts/launchd/de.heim-ki.rag-indexer.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/de.heim-ki.rag-indexer.plist
+
      Verpasste Läufe werden beim Aufwachen aus dem Ruhezustand nachgeholt,
-     nicht aber nach einem kompletten Shutdown. -->
+     nicht aber nach einem kompletten Shutdown oder ohne angemeldete Session. -->
 <dict>
     <key>Label</key>
     <string>de.heim-ki.rag-indexer</string>

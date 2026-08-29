@@ -3,9 +3,20 @@
 <plist version="1.0">
 <!-- macOS-Pendant zum systemd-Timer (README §11):
      tägliches Backup um 3:30 Uhr, nach dem RAG-Indexer.
-     Installation:
-       sudo cp scripts/launchd/de.heim-ki.backup.plist /Library/LaunchDaemons/
-       sudo launchctl load -w /Library/LaunchDaemons/de.heim-ki.backup.plist -->
+
+     Bewusst ein LaunchAgent (Nutzer-Session), KEIN LaunchDaemon: Die
+     docker-CLI erreicht den Daemon von Docker Desktop/OrbStack nur aus einer
+     angemeldeten Session (Socket unter ~/.docker/run/docker.sock —
+     /var/run/docker.sock existiert standardmäßig nicht). Ein root-Daemon
+     fände nachts keine Volumes vor; backup.sh bricht in dem Fall inzwischen
+     mit Fehler ab statt still ein leeres Backup zu schreiben. Für den Betrieb
+     ohne angesteckten Monitor: automatische Anmeldung aktivieren — siehe
+     README §3, "Unbeaufsichtigter Betrieb".
+
+     Installation (ohne sudo):
+       mkdir -p ~/Library/LaunchAgents
+       cp scripts/launchd/de.heim-ki.backup.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/de.heim-ki.backup.plist -->
 <dict>
     <key>Label</key>
     <string>de.heim-ki.backup</string>
