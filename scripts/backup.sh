@@ -19,6 +19,15 @@ KEEP_DAYS="${KEEP_DAYS:-14}"
 STATE_FILE="${STATE_FILE:-/srv/rag-index-state.json}"
 STAMP="$(date +%F)"
 
+# Ohne erreichbaren Docker-Daemon würden unten beide Volumes als "existiert
+# nicht" übersprungen und das Backup wäre still leer — deshalb hart abbrechen.
+# (macOS: Docker Desktop/OrbStack laufen nur in einer angemeldeten
+# Nutzer-Session — siehe README §3, "Unbeaufsichtigter Betrieb".)
+if ! docker info >/dev/null 2>&1; then
+    echo "FEHLER: Docker-Daemon nicht erreichbar — Backup abgebrochen." >&2
+    exit 1
+fi
+
 mkdir -p "$BACKUP_DIR"
 
 backup_volume() {

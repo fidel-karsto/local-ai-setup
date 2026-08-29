@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- macOS-Pendant zum systemd-Timer (README §11):
+     tägliches Backup um 3:30 Uhr, nach dem RAG-Indexer.
+
+     Bewusst ein LaunchAgent (Nutzer-Session), KEIN LaunchDaemon: Die
+     docker-CLI erreicht den Daemon von Docker Desktop/OrbStack nur aus einer
+     angemeldeten Session (Socket unter ~/.docker/run/docker.sock —
+     /var/run/docker.sock existiert standardmäßig nicht). Ein root-Daemon
+     fände nachts keine Volumes vor; backup.sh bricht in dem Fall inzwischen
+     mit Fehler ab statt still ein leeres Backup zu schreiben. Für den Betrieb
+     ohne angesteckten Monitor: automatische Anmeldung aktivieren — siehe
+     README §3, "Unbeaufsichtigter Betrieb".
+
+     Installation (ohne sudo):
+       mkdir -p ~/Library/LaunchAgents
+       cp scripts/launchd/de.heim-ki.backup.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/de.heim-ki.backup.plist -->
+<dict>
+    <key>Label</key>
+    <string>de.heim-ki.backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/opt/heim-ki/scripts/backup.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- docker liegt unter macOS in /opt/homebrew/bin bzw. /usr/local/bin -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>BACKUP_DIR</key>
+        <string>/opt/heim-ki/backups</string>
+        <key>STATE_FILE</key>
+        <string>/opt/heim-ki/rag-index-state.json</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/opt/heim-ki/logs/backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/heim-ki/logs/backup.log</string>
+</dict>
+</plist>

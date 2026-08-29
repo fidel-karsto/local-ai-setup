@@ -1,0 +1,86 @@
+# Heim-KI auf einem macOS-Host (Apple Silicon) — siehe README §3/§4.
+#
+# Wichtigster Unterschied zu Linux: Docker-Container haben unter macOS KEINEN
+# GPU-Zugriff — Ollama läuft auf dem Mac deshalb NATIV (Metal-Beschleunigung,
+# z. B. via "brew install ollama"). Diese Datei startet nur den Rest und
+# verweist für Ollama auf den Host (host.docker.internal).
+#
+# Start:            cp .env.example .env   # anpassen, dann:
+#                   docker compose -f docker-compose.macos.yml up -d
+# Variante A (RAG): docker compose -f docker-compose.macos.yml --profile rag up -d
+# Variante B:       docker compose -f docker-compose.macos.yml --profile rag-batch up -d
+#
+# Der Port ist bewusst nur an 127.0.0.1 gebunden — der NGINX auf dem Host
+# (brew install nginx, Konfiguration aus nginx/) ist der Eingang aus dem LAN.
+
+services:
+  open-webui:
+    image: ${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.11.1}
+    container_name: open-webui
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Europe/Berlin}
+      # Natives Ollama auf dem Mac (host.docker.internal = der Mac selbst):
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # Nach dem Anlegen des Admin-Accounts in der .env auf "false" setzen:
+      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
+    volumes:
+      - open-webui-data:/app/backend/data
+    ports:
+      - "127.0.0.1:3000:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Dokumenten-Extraktion für RAG-Variante A (README §7). Profil "rag".
+  # Unter macOS immer das CPU-Image (keine GPU im Container).
+  docling:
+    image: ${DOCLING_IMAGE:-ghcr.io/docling-project/docling-serve:v1.31.0}
+    container_name: docling
+    restart: unless-stopped
+    profiles: ["rag"]
+    environment:
+      - TZ=${TZ:-Europe/Berlin}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:5001/health || python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5001/health')\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # Vektordatenbank für RAG-Variante B (README §7). Profil "rag-batch".
+  chroma:
+    image: ${CHROMA_IMAGE:-chromadb/chroma:1.5.9}
+    container_name: chroma
+    restart: unless-stopped
+    profiles: ["rag-batch"]
+    environment:
+      - ANONYMIZED_TELEMETRY=false
+    volumes:
+      - chroma-data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'cat < /dev/null > /dev/tcp/localhost/8000' || curl -fsS http://localhost:8000/api/v2/heartbeat",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+# Feste Volume-Namen wie in der Linux-Variante (Backup/Restore, README §11):
+volumes:
+  open-webui-data:
+    name: open-webui-data
+  chroma-data:
+    name: chroma-data
