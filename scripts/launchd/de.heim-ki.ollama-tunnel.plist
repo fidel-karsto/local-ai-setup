@@ -14,11 +14,15 @@
      Auf dem Docker-Host (siehe Tutorial §5):
        sudo useradd --system --create-home --shell /usr/sbin/nologin ollama-tunnel
        # in ~ollama-tunnel/.ssh/authorized_keys, EINE Zeile:
-       #   restrict,permitlisten="127.0.0.1:11435",permitopen="none" ssh-ed25519 AAAA...
-       # "restrict" schaltet zunächst alles ab. permitlisten begrenzt den
-       # erlaubten Remote-Forward (-R) auf genau diesen Listener; permitopen="none"
-       # schliesst zusätzlich lokale und dynamische Forwards (-L/-D) aus, damit ein
-       # kompromittierter Tunnel-Key vom Docker-Host aus kein Pivoting erlaubt.
+       #   restrict,port-forwarding,permitlisten="127.0.0.1:11435",permitopen="none" ssh-ed25519 AAAA...
+       # "restrict" schaltet alles ab (Port-, Agent-, X11-Forwarding, PTY).
+       # "port-forwarding" schaltet die Weiterleitung als einziges wieder an —
+       # ohne dieses Schlüsselwort käme der Tunnel gar nicht zustande, denn
+       # permitlisten und permitopen BEGRENZEN nur, sie aktivieren nichts.
+       # permitlisten begrenzt den Remote-Forward (-R) auf genau diesen
+       # Listener; permitopen="none" schliesst lokale und dynamische Forwards
+       # (-L/-D) aus, damit ein kompromittierter Tunnel-Key vom Docker-Host
+       # aus kein Pivoting ins übrige Netz erlaubt.
 
      Installation (DOCKER-HOST-IP und BENUTZER unten vorher ersetzen):
        mkdir -p ~/Library/LaunchAgents /opt/heim-ki/logs
