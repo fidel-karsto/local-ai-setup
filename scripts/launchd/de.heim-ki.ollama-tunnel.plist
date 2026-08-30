@@ -14,7 +14,11 @@
      Auf dem Docker-Host (siehe Tutorial §5):
        sudo useradd --system --create-home --shell /usr/sbin/nologin ollama-tunnel
        # in ~ollama-tunnel/.ssh/authorized_keys, EINE Zeile:
-       #   restrict,port-forwarding,permitlisten="127.0.0.1:11435" ssh-ed25519 AAAA...
+       #   restrict,permitlisten="127.0.0.1:11435",permitopen="none" ssh-ed25519 AAAA...
+       # "restrict" schaltet zunächst alles ab. permitlisten begrenzt den
+       # erlaubten Remote-Forward (-R) auf genau diesen Listener; permitopen="none"
+       # schliesst zusätzlich lokale und dynamische Forwards (-L/-D) aus, damit ein
+       # kompromittierter Tunnel-Key vom Docker-Host aus kein Pivoting erlaubt.
 
      Installation (DOCKER-HOST-IP und BENUTZER unten vorher ersetzen):
        mkdir -p ~/Library/LaunchAgents /opt/heim-ki/logs
@@ -35,6 +39,19 @@
         <string>-o</string><string>ExitOnForwardFailure=yes</string>
         <string>-o</string><string>ServerAliveInterval=30</string>
         <string>-o</string><string>ServerAliveCountMax=3</string>
+        <!-- BatchMode=yes: launchd hat kein TTY, ssh darf also nie interaktiv
+             nachfragen. Fehlt der Host-Key des Docker-Hosts in known_hosts
+             (Setup-Schritt vergessen) oder wurde er rotiert, würde ssh sonst
+             lautlos auf eine Eingabe warten, scheitern und dank
+             ThrottleInterval=30 in eine dauerhafte Neustartschleife laufen.
+             Mit BatchMode=yes bricht ssh stattdessen sofort mit einer klaren
+             Fehlermeldung ("Host key verification failed") ab, die in
+             /opt/heim-ki/logs/ollama-tunnel.log sichtbar wird.
+             StrictHostKeyChecking=yes ist zusätzlich explizit gesetzt, damit
+             sich ssh bei einem rotierten Host-Key auch nicht selbstständig
+             verhält, sondern den gleichen klaren Fehler liefert. -->
+        <string>-o</string><string>BatchMode=yes</string>
+        <string>-o</string><string>StrictHostKeyChecking=yes</string>
         <string>-o</string><string>IdentitiesOnly=yes</string>
         <string>-i</string><string>/Users/BENUTZER/.ssh/id_ollama_tunnel</string>
         <string>-R</string><string>127.0.0.1:11435:127.0.0.1:11434</string>
