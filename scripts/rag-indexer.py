@@ -16,6 +16,8 @@ Eigenschaften:
 - Eingebettet wird chunker.contextualize(chunk) (Text inkl.
   Überschriften-Kontext), nicht der nackte chunk.text.
 - Eine fehlerhafte Datei bricht den Lauf nicht ab (Exit-Code 1 am Ende).
+- Symlinks werden übersprungen: ein Link aus DOCS_DIR heraus würde sonst
+  fremde Dateien in den Index (und damit in die Chat-Antworten) tragen.
 
 Konfiguration über Umgebungsvariablen (Default in Klammern):
   DOCS_DIR    (/srv/dokumente)              Dokumentenordner
@@ -42,6 +44,7 @@ from urllib.parse import urlparse
 
 import chromadb
 import ollama
+import docscan
 from docling.chunking import HybridChunker
 from docling.document_converter import DocumentConverter
 
@@ -52,7 +55,6 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
 COLLECTION = os.environ.get("COLLECTION", "heim-docs")
 
-SUFFIXES = {".pdf", ".docx", ".pptx", ".html", ".md"}
 EMBED_BATCH = 32
 
 
@@ -109,11 +111,7 @@ def main() -> int:
     chunker = HybridChunker()
 
     state = load_state()
-    current = {
-        str(p.relative_to(DOCS_DIR)): p
-        for p in sorted(DOCS_DIR.rglob("*"))
-        if p.is_file() and p.suffix.lower() in SUFFIXES
-    }
+    current = docscan.scan(DOCS_DIR)
 
     # 1) Chunks von gelöschten Dateien entfernen
     for rel in sorted(set(state) - set(current)):
