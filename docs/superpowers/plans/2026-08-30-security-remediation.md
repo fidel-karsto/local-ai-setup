@@ -356,10 +356,18 @@ STATE_FILE="${STATE_FILE:-/srv/heim-ki/rag-index-state.json}"
 
 - [ ] **Step 3: Prüfen, dass kein alter Pfad in Code oder Units übrigbleibt**
 
-Run: `grep -rn "/srv/rag-index-state.json" scripts/ tools/ docker-compose*.yml .env.example`
+Run: `grep -rn "/srv/rag-index-state.json" scripts/ tools/ --exclude-dir=systemd`
 Expected: keine Ausgabe
 
-(`TUTORIAL_*.md` bleibt hier bewusst noch unverändert — die Doku kommt in Task 8.)
+`scripts/systemd/` ist hier bewusst ausgenommen: `rag-indexer.service:13` trägt
+den alten Pfad noch in einer auskommentierten `Environment=`-Zeile und wird erst
+in Task 3 ersetzt. `TUTORIAL_*.md` bleibt ebenfalls noch unverändert — die Doku
+kommt in Task 8.
+
+Gegenprobe, dass der neue Pfad wirklich gesetzt ist:
+
+Run: `grep -c "/srv/heim-ki/rag-index-state.json" scripts/rag-indexer.py scripts/backup.sh`
+Expected: `scripts/rag-indexer.py:2` und `scripts/backup.sh:3`
 
 - [ ] **Step 4: Syntaxprüfung**
 
