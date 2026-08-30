@@ -807,11 +807,20 @@ server {
 
 - [ ] **Step 5: Prüfen**
 
-Run: `grep -c "satisfy all" nginx/heim-ki.conf nginx/heim-ki-https.conf`
+Die Muster müssen am Zeilenanfang verankert sein, sonst zählen sie die
+Kommentarzeilen mit, die dieselben Wörter enthalten (`# satisfy all = …`,
+`… weil die auth_basic oben davorsteht`).
+
+Run: `grep -c "^[[:space:]]*satisfy all;" nginx/heim-ki.conf nginx/heim-ki-https.conf`
 Expected: je `2` (nur die Ollama-vHosts, nicht `chat.heim.lan`)
 
-Run: `grep -n "auth_basic" nginx/heim-ki.conf | wc -l`
-Expected: `4` (zwei Blöcke × `auth_basic` + `auth_basic_user_file`)
+Run: `grep -c "^[[:space:]]*auth_basic" nginx/heim-ki.conf nginx/heim-ki-https.conf`
+Expected: je `4` (zwei Blöcke × `auth_basic` + `auth_basic_user_file`)
+
+Strukturprüfung — geschweifte Klammern müssen ausgeglichen sein:
+
+Run: `for f in nginx/heim-ki.conf nginx/heim-ki-https.conf; do echo "$f $(grep -o '{' $f|wc -l) $(grep -o '}' $f|wc -l)"; done`
+Expected: je Datei zwei gleiche Zahlen (`heim-ki.conf` 6/6, `heim-ki-https.conf` 7/7)
 
 Run: `awk '/server_name chat.heim.lan/,/^}/' nginx/heim-ki.conf | grep -c auth_basic`
 Expected: `0` — Open WebUI behält seine eigene Anmeldung, davor gehört keine zweite
