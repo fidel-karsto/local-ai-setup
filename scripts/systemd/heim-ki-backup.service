@@ -7,6 +7,23 @@ After=docker.service
 Type=oneshot
 ExecStart=/srv/scripts/backup.sh
 Nice=10
+
+# Läuft weiterhin als root, weil das Skript den Docker-Socket braucht. Eine
+# Mitgliedschaft in der docker-Gruppe wäre root-äquivalent und brächte nichts.
+#
+# Aus demselben Grund hier bewusst KEIN ProtectSystem=strict und keine engere
+# Sandbox: wer den Docker-Socket hat, ist root — eine Sandbox drumherum
+# suggeriert eine Grenze, die es nicht gibt. Der eigentliche Schutz ist, dass
+# /srv/scripts root:root gehört und der Login-User dort nichts ändern kann
+# (siehe Tutorial §11).
+#
+# ProtectHome=yes setzt voraus, dass BACKUP_DIR nicht unter /home liegt.
+# Bei einem NAS-Mount unterhalb von /home die Zeile entfernen.
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+
 # Konfiguration bei Bedarf (Defaults siehe Skript-Kopf):
 # Environment=BACKUP_DIR=/srv/backups/heim-ki
 # Environment=KEEP_DAYS=14
+# Environment=STATE_FILE=/srv/heim-ki/rag-index-state.json

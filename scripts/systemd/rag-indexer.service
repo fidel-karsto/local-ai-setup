@@ -6,10 +6,31 @@ After=network-online.target docker.service
 
 [Service]
 Type=oneshot
+# Läuft bewusst NICHT als root: der Indexer braucht nur Lesezugriff auf
+# /srv/dokumente und HTTP zu Ollama und Chroma. Den Account anlegen mit:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin heim-ki
+User=heim-ki
+Group=heim-ki
 ExecStart=/srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py
 Nice=10
+
+# --- Sandbox ---------------------------------------------------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+# AF_UNIX wird für die Namensauflösung über nscd/systemd-resolved gebraucht —
+# ohne sie schlägt je nach Host-Konfiguration schon der DNS-Lookup fehl:
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Muss existieren und heim-ki gehören, sonst startet die Unit nicht:
+#   sudo install -d -o heim-ki -g heim-ki -m 0750 /srv/heim-ki
+ReadWritePaths=/srv/heim-ki
+
 # Konfiguration bei Bedarf (Defaults siehe Skript-Kopf):
 # Environment=DOCS_DIR=/srv/dokumente
-# Environment=STATE_FILE=/srv/rag-index-state.json
+# Environment=STATE_FILE=/srv/heim-ki/rag-index-state.json
 # Environment=CHROMA_URL=http://127.0.0.1:8000
 # Environment=OLLAMA_URL=http://127.0.0.1:11434
