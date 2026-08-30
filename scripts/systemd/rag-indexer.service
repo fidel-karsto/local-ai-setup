@@ -29,6 +29,20 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 #   sudo install -d -o heim-ki -g heim-ki -m 0750 /srv/heim-ki
 ReadWritePaths=/srv/heim-ki
 
+# docling.document_converter.DocumentConverter() lädt bei der Default-
+# Pipeline die Layout- und Tabellenmodelle beim ersten Lauf über den
+# HuggingFace Hub nach — per Default landen die unter $HOME/.cache/huggingface.
+# Für heim-ki (--no-create-home) existiert kein $HOME, und ProtectHome=yes
+# blendet /home für den Dienst ohnehin komplett aus. Cache deshalb aktiv
+# ins freigegebene ReadWritePaths-Verzeichnis umlenken:
+Environment=HF_HOME=/srv/heim-ki/.cache/huggingface
+Environment=XDG_CACHE_HOME=/srv/heim-ki/.cache
+# Der von docling standardmäßig genutzte OCR-Motor easyocr lädt seine
+# Modelle unabhängig davon und ignoriert HF_HOME/XDG_CACHE_HOME — ohne
+# dieses Override würde er beim ersten Lauf ebenfalls nach $HOME/.EasyOCR
+# schreiben wollen und an derselben ProtectHome-Sandbox scheitern:
+Environment=EASYOCR_MODULE_PATH=/srv/heim-ki/.cache/easyocr
+
 # Konfiguration bei Bedarf (Defaults siehe Skript-Kopf):
 # Environment=DOCS_DIR=/srv/dokumente
 # Environment=STATE_FILE=/srv/heim-ki/rag-index-state.json
