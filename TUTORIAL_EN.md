@@ -420,6 +420,8 @@ sudo chmod 640 /etc/nginx/heim-ki.htpasswd
 
 ⚠️ **For this HTTP variant only:** basic auth transmits the password base64-encoded in plain text, on every request — any device sniffing traffic on the LAN then knows it. Set up §10 (HTTPS) for permanent operation; this file is meant as an intermediate step before the mkcert setup.
 
+**Windows workstation:** before `nginx -t`, replace `proxy_pass http://127.0.0.1:11435;` with `proxy_pass http://<WORKSTATION-IP>:11434;` in the `ollama-ws.heim.lan` block — the tunnel port above only applies to the macOS path from §5; Windows has no tunnel equivalent.
+
 Install and enable:
 
 ```bash

@@ -420,6 +420,8 @@ sudo chmod 640 /etc/nginx/heim-ki.htpasswd
 
 ⚠️ **Nur für diese HTTP-Variante:** Basic Auth überträgt das Passwort base64-kodiert im Klartext, bei jedem Request — jedes mitlesende Gerät im LAN kennt es danach. Für den Dauerbetrieb §10 (HTTPS) einrichten; diese Datei ist als Zwischenschritt vor der mkcert-Einrichtung gedacht.
 
+**Windows-Workstation:** Vor `nginx -t` im `ollama-ws.heim.lan`-Block `proxy_pass http://127.0.0.1:11435;` durch `proxy_pass http://<WORKSTATION-IP>:11434;` ersetzen — der Tunnel-Port oben gilt nur für den macOS-Weg aus §5, unter Windows gibt es kein Tunnel-Äquivalent.
+
 Installieren und aktivieren:
 
 ```bash
