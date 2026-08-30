@@ -40,9 +40,30 @@ class TestDocscan(unittest.TestCase):
         (self.docs / "kopie.md").symlink_to(self.docs / "echt.md")
         self.assertEqual(list(docscan.scan(self.docs)), ["echt.md"])
 
-    def test_toter_symlink_bricht_den_lauf_nicht_ab(self):
+    def test_toter_symlink_wird_bereits_von_is_symlink_abgefangen(self):
+        # Path.is_symlink() ist lstat-basiert und liefert auch für einen
+        # toten Link True. Dieser Fall erreicht also gar nicht erst
+        # resolve(strict=True)/das except OSError, sondern wird schon von
+        # der Symlink-Prüfung ganz oben in is_indexable() abgelehnt.
         (self.docs / "weg.md").symlink_to(self.aussen / "gibtsnicht.md")
         self.assertEqual(docscan.scan(self.docs), {})
+
+    def test_containment_lehnt_reguläre_datei_ausserhalb_docs_dir_ab(self):
+        # Kein Symlink, passende Endung, existiert, aber liegt ausserhalb
+        # docs_dir: erzwingt den Pfad bis zum is_relative_to()-Check, der
+        # hier tatsächlich False liefern muss (nicht schon vorher von
+        # is_symlink() oder rglob() abgefangen).
+        ausserhalb = self.aussen / "notiz.md"
+        ausserhalb.write_text("geheim", encoding="utf-8")
+        self.assertFalse(docscan.is_indexable(ausserhalb, self.docs))
+
+    def test_containment_erlaubt_reguläre_datei_innerhalb_docs_dir(self):
+        # Gegenprobe zum vorigen Test: dieselbe Prüfung muss für eine
+        # reguläre Datei innerhalb docs_dir True liefern, damit der Test
+        # nicht nur "immer False" bindet.
+        innerhalb = self.docs / "notiz.md"
+        innerhalb.write_text("hallo", encoding="utf-8")
+        self.assertTrue(docscan.is_indexable(innerhalb, self.docs))
 
     def test_unbekannte_endung_wird_ignoriert(self):
         (self.docs / "notiz.txt").write_text("hallo", encoding="utf-8")

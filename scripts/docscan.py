@@ -19,6 +19,13 @@ def is_indexable(path: Path, docs_dir: Path) -> bool:
     "notiz.md -> /etc/shadow" käme sonst in den Index und wäre anschließend
     über den Chat abrufbar. Die Endung stammt dabei vom Linknamen, der
     SUFFIXES-Filter allein schützt also nicht.
+
+    Hardlinks innerhalb docs_dir auf eine Datei außerhalb bestehen diese
+    Prüfung (sie haben kein eigenes "Ziel", resolve() zeigt auf den Pfad
+    selbst) und werden hier bewusst nicht gesondert behandelt: das Anlegen
+    eines Hardlinks auf Standard-Debian/Ubuntu erfordert ohnehin
+    Leserechte auf die Zieldatei (fs.protected_hardlinks=1 ist Default),
+    der Aufrufer könnte die Datei also auch direkt lesen.
     """
     if path.is_symlink():
         return False
@@ -29,7 +36,11 @@ def is_indexable(path: Path, docs_dir: Path) -> bool:
     try:
         aufgeloest = path.resolve(strict=True)
     except OSError:
-        # Toter Link, Rechteproblem, Schleife — im Zweifel nicht indexieren.
+        # Tote Symlinks werden schon oben von is_symlink() abgefangen und
+        # erreichen resolve() nie. Real erreichbar ist dieser Zweig nur über
+        # eine Race (Datei verschwindet zwischen is_file() und resolve())
+        # oder ein Rechteproblem/eine Schleife beim Auflösen — im Zweifel
+        # nicht indexieren.
         return False
     return aufgeloest.is_relative_to(docs_dir.resolve())
 
