@@ -262,25 +262,26 @@ Fingerprint gegen `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` **auf dem D
 sudo useradd --system --create-home --shell /usr/sbin/nologin ollama-tunnel
 sudo -u ollama-tunnel mkdir -p ~ollama-tunnel/.ssh
 sudo -u ollama-tunnel tee ~ollama-tunnel/.ssh/authorized_keys <<'EOF'
-restrict,port-forwarding,permitlisten="127.0.0.1:11435" ssh-ed25519 AAAA... kommentar
+restrict,port-forwarding,permitlisten="127.0.0.1:11435",permitlisten="172.17.0.1:11435" ssh-ed25519 AAAA... kommentar
 EOF
 sudo -u ollama-tunnel chmod 600 ~ollama-tunnel/.ssh/authorized_keys
 ```
 
-`restrict` schaltet zunächst alles ab (Port-, Agent-, X11-Forwarding, PTY); `port-forwarding` schaltet die Weiterleitung als einziges wieder an — ohne dieses Schlüsselwort käme der Tunnel gar nicht zustande, denn `permitlisten` begrenzt nur, es aktiviert nichts. `permitlisten` begrenzt den Remote-Forward (`-R`) auf genau `127.0.0.1:11435`. `nologin` ist unproblematisch, weil `ssh -N` keine Shell startet.
+`restrict` schaltet zunächst alles ab (Port-, Agent-, X11-Forwarding, PTY); `port-forwarding` schaltet die Weiterleitung als einziges wieder an — ohne dieses Schlüsselwort käme der Tunnel gar nicht zustande, denn `permitlisten` begrenzt nur, es aktiviert nichts. Die beiden kommagetrennten `permitlisten`-Einträge begrenzen den Remote-Forward (`-R`) auf genau diese zwei Listener: `127.0.0.1:11435` für NGINX (§6) und `172.17.0.1:11435` — die Gateway-Adresse der Docker-Bridge (`docker0`), über die Open WebUI (selbst Container im Compose-Bridge-Netz) die Workstation direkt erreicht, ohne NGINX und ohne Credentials, da ein Request von dort mit Bridge-IP an der Allowlist scheiterte (403) und Open WebUI für Ollama-Verbindungen ohnehin Bearer- statt Basic-Auth schickt (401); diese zweite Adresse ist hostabhängig — auf dem Docker-Host mit `ip -4 addr show docker0` prüfen und bei Abweichung hier sowie in der `-R`-Zeile der Tunnel-plist anpassen. `nologin` ist unproblematisch, weil `ssh -N` keine Shell startet.
 
 **Restrisiko:** `port-forwarding` reaktiviert jede Forward-Art, auch lokale (`-L`) und dynamische (`-D`) Forwards — `permitlisten` schränkt nur den Remote-Listener ein, nicht die Forward-Richtung. Ein kompromittierter Tunnel-Key erlaubt also weiterhin Pivoting vom Docker-Host aus; dafür gibt es keine per-Key-Option in `authorized_keys`. Wer das zusätzlich schließen will, ergänzt optional in der `sshd_config` des Docker-Hosts:
 
 ```
 Match User ollama-tunnel
+    GatewayPorts clientspecified
     AllowTcpForwarding remote
-    PermitListen 127.0.0.1:11435
+    PermitListen 127.0.0.1:11435 172.17.0.1:11435
     AllowAgentForwarding no
     X11Forwarding no
     PermitTTY no
 ```
 
-`AllowTcpForwarding remote` ist der First-Class-Mechanismus, der genau `-R` erlaubt und `-L`/`-D` ausschließt. Der Tunnel funktioniert auch ohne diesen Match-Block — er schließt nur das genannte Pivoting-Restrisiko.
+`AllowTcpForwarding remote` ist der First-Class-Mechanismus, der genau `-R` erlaubt und `-L`/`-D` ausschließt und bleibt wie der Rest des Blocks optionale Zusatzhärtung gegen das Pivoting-Restrisiko; `GatewayPorts clientspecified` dagegen ist nicht optional, sobald der zweite Listener genutzt wird — per Default bindet sshd Remote-Forwardings lautlos auf Loopback und ignoriert eine abweichende `bind_address` in `-R`, ohne Fehlermeldung, sodass der Bridge-Listener einfach fehlt; wer den Match-Block oben nicht anlegen will, muss `GatewayPorts clientspecified` trotzdem irgendwo für den Nutzer `ollama-tunnel` setzen (global oder in einem eigenen, kleineren Match-Block).
 
 **5. Tunnel-Agent auf der Workstation installieren** ([`scripts/launchd/de.heim-ki.ollama-tunnel.plist`](scripts/launchd/de.heim-ki.ollama-tunnel.plist), `DOCKER-HOST-IP` und `BENUTZER` in der Datei vorher ersetzen):
 
@@ -450,7 +451,7 @@ Die Konfiguration selbst ist auf beiden Systemen identisch — Open WebUI lausch
 
 **Falls Ollama über den Proxy `403 Forbidden` liefert:** Das ist Ollamas Schutz gegen fremde Host-/Origin-Header. Die Konfiguration oben umgeht das bereits (`proxy_set_header Host 127.0.0.1:11434;`). `OLLAMA_ORIGINS=*` löst das Problem zwar auch, ist aber keine gute Idee: damit darf jede beliebige Webseite, die jemand im Haushalt öffnet, Requests an die API schicken. Die Umgehung des Host-Checks ist hier nur deshalb vertretbar, weil im NGINX Allowlist und Basic Auth davorstehen.
 
-Jetzt sind beide Ollama-APIs unter ordentlichen Base-URLs im LAN erreichbar — genau wie im Post beschrieben. In Open WebUI kann man unter *Admin-Einstellungen → Verbindungen* beide URLs (`http://ollama.heim.lan` und `http://ollama-ws.heim.lan`) als Ollama-Endpunkte eintragen. Ist die Workstation aus, nutzt man einfach die Modelle des Docker-Hosts.
+Jetzt sind beide Ollama-APIs unter ordentlichen Base-URLs im LAN erreichbar — für Menschen und CLI-Clients trägt man dafür in Open WebUI unter *Admin-Einstellungen → Verbindungen* `http://ollama.heim.lan` ein. Für die Workstation gilt das **nicht**: Open WebUI läuft selbst als Container im Compose-Bridge-Netz, ein Request von dort an `ollama-ws.heim.lan` trüge die Bridge-IP statt einer LAN-Adresse (403 an der Allowlist) und selbst mit erlaubter IP schickt Open WebUI für Ollama-Verbindungen Bearer-Token statt der von NGINX erwarteten Basic Auth (401) — der vHost bleibt also den menschlichen und CLI-Clients vorbehalten. Für die Workstation trägt man stattdessen `http://host.docker.internal:11435` ein, wie es der zweite Tunnel-Listener aus §5 auf der Docker-Bridge-Gateway-Adresse bereitstellt (`extra_hosts` in der `docker-compose.yml` macht den Namen im Container auflösbar). Ist die Workstation aus, nutzt man einfach die Modelle des Docker-Hosts.
 
 **Tipp:** Wer lieber klickt statt Configs schreibt, nimmt den [Nginx Proxy Manager](https://nginxproxymanager.com) als Container.
 
@@ -616,7 +617,7 @@ tail -f /opt/heim-ki/logs/rag-indexer.log
 
 - Alle im Haushalt erreichen unter **`http://chat.heim.lan`** eine ChatGPT-ähnliche Oberfläche — ohne Ports, ohne IP-Adressen.
 - Die KI kennt die eigenen Dokumente (RAG mit Docling + ChromaDB + bge-m3).
-- Braucht man mehr Leistung, startet man die Workstation — deren Ollama ist sofort unter `http://ollama-ws.heim.lan` verfügbar.
+- Braucht man mehr Leistung, startet man die Workstation — Open WebUI erreicht deren Ollama sofort über die in §5/§6 eingerichtete Verbindung `http://host.docker.internal:11435`; Menschen und CLI-Clients im LAN nutzen weiterhin `http://ollama-ws.heim.lan`.
 - **Keine Daten fließen „nach Amiland"** — alles bleibt im eigenen LAN.
 
 ## 9. Updates

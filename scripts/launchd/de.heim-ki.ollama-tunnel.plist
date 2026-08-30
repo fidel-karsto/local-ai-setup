@@ -2,8 +2,33 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <!-- SSH-Reverse-Tunnel: stellt das lokale Ollama (127.0.0.1:11434) auf dem
-     Docker-Host unter 127.0.0.1:11435 bereit, wo der NGINX es abholt
-     (vHost ollama-ws.heim.lan).
+     Docker-Host über ZWEI Listener bereit:
+       - 127.0.0.1:11435 — hier holt NGINX es ab (vHost ollama-ws.heim.lan,
+         IP-Allowlist + Basic Auth für Menschen und CLI-Clients im LAN).
+       - 172.17.0.1:11435 — die Gateway-Adresse der Docker-Bridge (docker0).
+         Open WebUI läuft selbst als Container im Compose-Bridge-Netz; ein
+         Request von dort an ollama-ws.heim.lan trüge als Quell-IP die
+         Bridge-Adresse (403 an der Allowlist), und Open WebUI schickt für
+         Ollama-Verbindungen ohnehin Bearer-Token statt Basic Auth (401).
+         Über diesen zweiten Listener spricht Open WebUI die Workstation
+         stattdessen direkt an, ohne NGINX und ohne Credentials — die Adresse
+         ist aus dem LAN nicht geroutet, es entsteht also keine neue
+         Exposition.
+       ACHTUNG: 172.17.0.1 ist nur der Docker-Standard für docker0 und
+       hostabhängig (eigenes Compose-Netz, eigenes Subnetz möglich). Vor der
+       Installation auf dem DOCKER-HOST prüfen:
+         ip -4 addr show docker0
+       Weicht die Adresse ab, müssen die zweite -R-Zeile unten UND der
+       zugehörige permitlisten-Eintrag in authorized_keys angepasst werden.
+       Verifikation nach der Installation (auf dem Docker-Host):
+         docker exec open-webui curl -sS http://host.docker.internal:11435/api/tags
+
+     Voraussetzung auf dem Docker-Host für den zweiten Listener:
+     GatewayPorts clientspecified in der sshd_config — per Default bindet
+     sshd Remote-Forwardings auf Loopback und ignoriert eine abweichende
+     bind_address in -R lautlos (kein Fehler, der Listener fehlt einfach).
+     Muss für den Nutzer ollama-tunnel gelten, global oder wie unten in
+     einem Match-Block.
 
      Ist das Notebook aus oder unterwegs, steht der Tunnel nicht und
      ollama-ws.heim.lan antwortet mit 502. Das ist so gewollt.
@@ -14,12 +39,13 @@
      Auf dem Docker-Host (siehe Tutorial §5):
        sudo useradd --system --create-home --shell /usr/sbin/nologin ollama-tunnel
        # in ~ollama-tunnel/.ssh/authorized_keys, EINE Zeile:
-       #   restrict,port-forwarding,permitlisten="127.0.0.1:11435" ssh-ed25519 AAAA...
+       #   restrict,port-forwarding,permitlisten="127.0.0.1:11435",permitlisten="172.17.0.1:11435" ssh-ed25519 AAAA...
        # "restrict" schaltet alles ab (Port-, Agent-, X11-Forwarding, PTY).
        # "port-forwarding" schaltet die Weiterleitung als einziges wieder an —
        # ohne dieses Schlüsselwort käme der Tunnel gar nicht zustande, denn
-       # permitlisten BEGRENZT nur, es aktiviert nichts. permitlisten begrenzt
-       # den Remote-Forward (-R) auf genau diesen Listener.
+       # permitlisten BEGRENZT nur, es aktiviert nichts. Die zwei
+       # kommagetrennten permitlisten-Einträge begrenzen den Remote-Forward
+       # (-R) auf genau diese zwei Listener.
        #
        # Restrisiko: "port-forwarding" reaktiviert JEDE Forward-Art, auch
        # lokale (-L) und dynamische (-D) Forwards — permitlisten schränkt nur
@@ -29,16 +55,22 @@
        # authorized_keys, die ausschliesslich Remote-Forwards zulässt.
        # Empfohlene, aber optionale Zusatzhärtung gegen dieses Restrisiko:
        # ein Match-Block in der sshd_config des Docker-Hosts, der -L/-D
-       # bereits auf Protokollebene ausschliesst, z.B.:
+       # bereits auf Protokollebene ausschliesst — GatewayPorts clientspecified
+       # gehört (siehe oben, dort NICHT optional) sinnvollerweise in denselben
+       # Block, z.B.:
        #   Match User ollama-tunnel
+       #       GatewayPorts clientspecified
        #       AllowTcpForwarding remote
-       #       PermitListen 127.0.0.1:11435
+       #       PermitListen 127.0.0.1:11435 172.17.0.1:11435
        #       AllowAgentForwarding no
        #       X11Forwarding no
        #       PermitTTY no
        # AllowTcpForwarding remote ist der First-Class-Mechanismus, der genau
        # -R erlaubt und -L/-D ausschliesst. Der Tunnel funktioniert auch ohne
-       # diesen Match-Block — er schliesst nur das Pivoting-Restrisiko.
+       # diesen Match-Block — er schliesst nur das Pivoting-Restrisiko. Wer
+       # ihn NICHT anlegt, muss GatewayPorts clientspecified trotzdem für
+       # ollama-tunnel setzen (global oder in einem eigenen, kleineren
+       # Match-Block), sonst bindet der zweite Listener oben nicht.
 
      Installation (DOCKER-HOST-IP und BENUTZER unten vorher ersetzen):
        mkdir -p ~/Library/LaunchAgents /opt/heim-ki/logs
@@ -75,6 +107,14 @@
         <string>-o</string><string>IdentitiesOnly=yes</string>
         <string>-i</string><string>/Users/BENUTZER/.ssh/id_ollama_tunnel</string>
         <string>-R</string><string>127.0.0.1:11435:127.0.0.1:11434</string>
+        <!-- Zweiter Listener auf der Docker-Bridge-Gateway-Adresse (siehe
+             Kommentarkopf oben) — hier greift Open WebUI direkt zu, ohne
+             NGINX und ohne Credentials. 172.17.0.1 ist der Docker-Standard
+             für docker0 und muss auf dem DOCKER-HOST geprüft werden
+             ("ip -4 addr show docker0"); bei Abweichung diese Zeile UND den
+             passenden permitlisten-Eintrag anpassen. Setzt GatewayPorts
+             clientspecified in der sshd_config des Docker-Hosts voraus. -->
+        <string>-R</string><string>172.17.0.1:11435:127.0.0.1:11434</string>
         <string>ollama-tunnel@DOCKER-HOST-IP</string>
     </array>
 

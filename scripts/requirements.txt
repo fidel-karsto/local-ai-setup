@@ -2,6 +2,9 @@
 # Installation:
 #   python3 -m venv /srv/scripts/.venv
 #   /srv/scripts/.venv/bin/pip install -r requirements.txt
-docling>=2.0
+# docling < 3: die systemd-Unit-Sandbox setzt HOME/HF_HOME/XDG_CACHE_HOME in
+# der Annahme, wohin docling seine Modelle cached — ein Major-Sprung könnte
+# das lautlos umwerfen.
+docling>=2.0,<3
 chromadb>=1.0,<2
 ollama>=0.4
