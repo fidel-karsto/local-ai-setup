@@ -21,7 +21,7 @@ Eigenschaften:
 
 Konfiguration über Umgebungsvariablen (Default in Klammern):
   DOCS_DIR    (/srv/dokumente)              Dokumentenordner
-  STATE_FILE  (/srv/rag-index-state.json)   Manifest für die Änderungserkennung
+  STATE_FILE  (/srv/heim-ki/rag-index-state.json)  Manifest für die Änderungserkennung
   CHROMA_URL  (http://127.0.0.1:8000)       ChromaDB-Server
   OLLAMA_URL  (http://127.0.0.1:11434)      Ollama für Embeddings
   EMBED_MODEL (bge-m3)
@@ -49,7 +49,7 @@ from docling.chunking import HybridChunker
 from docling.document_converter import DocumentConverter
 
 DOCS_DIR = Path(os.environ.get("DOCS_DIR", "/srv/dokumente"))
-STATE_FILE = Path(os.environ.get("STATE_FILE", "/srv/rag-index-state.json"))
+STATE_FILE = Path(os.environ.get("STATE_FILE", "/srv/heim-ki/rag-index-state.json"))
 CHROMA_URL = os.environ.get("CHROMA_URL", "http://127.0.0.1:8000")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")

@@ -4,19 +4,19 @@
 # Sichert:
 #   - Docker-Volume open-webui-data   (Nutzer, Chats, Wissenssammlungen)
 #   - Docker-Volume chroma-data       (RAG-Index, Variante B)
-#   - Manifest des Indexers           (STATE_FILE, Default /srv/rag-index-state.json)
+#   - Manifest des Indexers           (STATE_FILE, Default /srv/heim-ki/rag-index-state.json)
 # Bewusst NICHT gesichert: ollama-data — Modelle sind jederzeit per
 # "ollama pull" wiederherstellbar und würden das Backup nur aufblähen.
 #
 # Konfiguration über Umgebungsvariablen (Default in Klammern):
 #   BACKUP_DIR (/srv/backups/heim-ki)         Zielverzeichnis (gern ein NAS-Mount)
 #   KEEP_DAYS  (14)                           Sicherungen älter als N Tage löschen
-#   STATE_FILE (/srv/rag-index-state.json)    Indexer-Manifest
+#   STATE_FILE (/srv/heim-ki/rag-index-state.json)  Indexer-Manifest
 set -euo pipefail
 
 BACKUP_DIR="${BACKUP_DIR:-/srv/backups/heim-ki}"
 KEEP_DAYS="${KEEP_DAYS:-14}"
-STATE_FILE="${STATE_FILE:-/srv/rag-index-state.json}"
+STATE_FILE="${STATE_FILE:-/srv/heim-ki/rag-index-state.json}"
 STAMP="$(date +%F)"
 
 # Ohne erreichbaren Docker-Daemon würden unten beide Volumes als "existiert
