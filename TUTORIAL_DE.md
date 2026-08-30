@@ -170,7 +170,7 @@ services:
       - "127.0.0.1:3000:8080"            # nur localhost, s. o.
 ```
 
-Beide Ports sind bewusst **nur an `127.0.0.1` gebunden**: Aus dem LAN kommt man ausschließlich über den NGINX aus §6 — so gibt es genau einen Eingang, und die unauthentifizierte Ollama-API liegt nicht offen im Netz. (Das heißt auch: `http://<docker-host-ip>:3000` funktioniert von anderen Rechnern aus *nicht* — erst §6 einrichten und `http://chat.heim.lan` benutzen, oder zum Testen per SSH-Tunnel `ssh -L 3000:localhost:3000 <docker-host>`.)
+Beide Ports sind bewusst **nur an `127.0.0.1` gebunden**: Aus dem LAN kommt man ausschließlich über den NGINX aus §6 — so gibt es genau einen Eingang. Ollama selbst hat keinerlei Authentifizierung, deshalb steht sein vHost dort hinter einer IP-Allowlist **und** einer Basic Auth (`satisfy all`); ohne beides gibt es keinen Zugriff auf `/api/pull`, `/api/delete` und Konsorten. (Das heißt auch: `http://<docker-host-ip>:3000` funktioniert von anderen Rechnern aus *nicht* — erst §6 einrichten und `http://chat.heim.lan` benutzen, oder zum Testen per SSH-Tunnel `ssh -L 3000:localhost:3000 <docker-host>`.)
 
 Modelle laden:
 
@@ -200,7 +200,7 @@ ollama pull llama3.2:3b
 ollama pull bge-m3
 ```
 
-Die Hinweise oben zu **Erster Login & Registrierung** gelten unverändert. Statt der VRAM-Klimmzüge gilt auf dem Mac die Unified-Memory-Faustregel: macOS gönnt den Modellen grob bis zu ~⅔ des RAM — auf einem 16-GB-Mac laufen `llama3.2:3b` und `bge-m3` bequem nebeneinander, sogar 7B–8B-Modelle sind drin. Wer `OLLAMA_KEEP_ALIVE` o. ä. setzen will: `launchctl setenv OLLAMA_KEEP_ALIVE 30m` (danach `brew services restart ollama`) wirkt sofort, ist aber nach einem Neustart stillschweigend wieder weg — dauerhaft verdrahtet man solche Variablen in einem eigenen LaunchAgent statt über `brew services` (Vorlage: [`scripts/launchd/de.heim-ki.ollama-ws.plist`](scripts/launchd/de.heim-ki.ollama-ws.plist), dort `OLLAMA_HOST` weglassen bzw. ersetzen). Und weil Ollama nativ standardmäßig nur an `127.0.0.1` lauscht, gilt dieselbe Sicherheitslogik wie unter Linux: Der NGINX aus §6 ist der einzige Eingang aus dem LAN.
+Die Hinweise oben zu **Erster Login & Registrierung** gelten unverändert. Statt der VRAM-Klimmzüge gilt auf dem Mac die Unified-Memory-Faustregel: macOS gönnt den Modellen grob bis zu ~⅔ des RAM — auf einem 16-GB-Mac laufen `llama3.2:3b` und `bge-m3` bequem nebeneinander, sogar 7B–8B-Modelle sind drin. Wer `OLLAMA_KEEP_ALIVE` o. ä. setzen will: `launchctl setenv OLLAMA_KEEP_ALIVE 30m` (danach `brew services restart ollama`) wirkt sofort, ist aber nach einem Neustart stillschweigend wieder weg — dauerhaft verdrahtet man solche Variablen in einem eigenen LaunchAgent statt über `brew services` — das mitgelieferte [`scripts/launchd/de.heim-ki.ollama-ws.plist`](scripts/launchd/de.heim-ki.ollama-ws.plist) taugt dafür allerdings *nicht* mehr als Vorlage: Es ist fest auf die Workstation-Rolle aus §5 zugeschnitten (`OLLAMA_HOST` dort hart auf `127.0.0.1:11434` verdrahtet, für den SSH-Tunnel). Für den Docker-Host reicht eine eigene, einfache Kopie mit anderem `Label` und `OLLAMA_KEEP_ALIVE` in den `EnvironmentVariables`. Und weil Ollama nativ standardmäßig nur an `127.0.0.1` lauscht, gilt dieselbe Sicherheitslogik wie unter Linux: Der NGINX aus §6 ist der einzige Eingang aus dem LAN.
 
 **Quellen:**
 - Ollama Docker-Image: https://hub.docker.com/r/ollama/ollama
@@ -217,25 +217,80 @@ Die Workstation hat typischerweise mehr GPU-Leistung, läuft aber nicht rund um 
 [Ollama für Windows](https://ollama.com/download/windows) installieren, dann als *Benutzer-Umgebungsvariable* (`Systemsteuerung → Umgebungsvariablen`) `OLLAMA_HOST=0.0.0.0` setzen und Ollama neu starten, damit es aus dem LAN erreichbar ist. Zuletzt den Port in der Windows-Firewall freigeben (PowerShell als Administrator):
 
 ```powershell
-New-NetFirewallRule -DisplayName "Ollama" -Direction Inbound -LocalPort 11434 -Protocol TCP -Action Allow
+# -RemoteAddress und -Profile sind wichtig: ohne sie gilt die Regel in JEDEM
+# Netz, auch im Profil "Öffentlich" — und Ollama hat keine Authentifizierung.
+New-NetFirewallRule -DisplayName "Ollama" -Direction Inbound -LocalPort 11434 `
+  -Protocol TCP -Action Allow -RemoteAddress <DOCKER-HOST-IP> -Profile Private
 ```
 
 Fertig — kein WSL, kein Portproxy, und Ollama startet automatisch mit Windows.
 
+**Hinweis zum mitgelieferten NGINX:** Die Konfiguration aus §6 geht für `ollama-ws.heim.lan` vom SSH-Tunnel-Modell aus §5 (macOS) aus und proxyt fest auf `127.0.0.1:11435`. Wer die Workstation stattdessen wie hier direkt exponiert, muss den `ollama-ws`-Serverblock von Hand auf `proxy_pass http://<WORKSTATION-IP>:11434;` umstellen — die Firewall-Regel oben (nur `<DOCKER-HOST-IP>`, Profil „Privat") bleibt dann die einzige Zugriffsschranke auf der Workstation selbst.
+
 ### macOS: Mac als Workstation
 
-Ein Mac (z. B. ein MacBook Pro mit viel RAM) funktioniert genauso gut als On-demand-Workstation. Damit Ollama aus dem LAN erreichbar ist (nicht nur von localhost), muss `OLLAMA_HOST=0.0.0.0:11434` gesetzt sein — und zwar so, dass es Neustarts überlebt. `launchctl setenv` plus `brew services` ist dafür *nicht* verlässlich: brew services generiert seine Job-Definition bei jedem Restart/Upgrade neu, und per `launchctl` gesetzte Variablen sind nach einem Reboot weg — Ollama lauscht dann wieder still nur auf `127.0.0.1`, ohne dass auf der Workstation irgendetwas fehlschlägt. Deshalb liegt in diesem Repo ein fertiger LaunchAgent mit fest verdrahtetem `OLLAMA_HOST` ([`scripts/launchd/de.heim-ki.ollama-ws.plist`](scripts/launchd/de.heim-ki.ollama-ws.plist)):
+Ein Mac (z. B. ein MacBook Pro mit viel RAM) funktioniert genauso gut als On-demand-Workstation. Ollama bindet dafür **nicht** an `0.0.0.0` — Ollama hat keinerlei Authentifizierung, und an `0.0.0.0` gebunden lauschte das Notebook in jedem Netz, dem es beitritt, auch im Café- oder Hotel-WLAN. Stattdessen bleibt Ollama strikt auf `127.0.0.1`, und ein **SSH-Reverse-Tunnel** legt genau diesen einen Port gezielt auf dem Docker-Host offen — dort ebenfalls nur auf dessen Loopback, wo NGINX (§6) ihn hinter IP-Allowlist und Basic Auth abholt.
+
+**1. Lokales Ollama fest auf Loopback verdrahten:** Der mitgelieferte LaunchAgent [`scripts/launchd/de.heim-ki.ollama-ws.plist`](scripts/launchd/de.heim-ki.ollama-ws.plist) bindet `OLLAMA_HOST` fest an `127.0.0.1:11434` — hier ist nichts mehr zu ersetzen:
 
 ```bash
 brew install ollama    # nur die Binärdatei — KEIN "brew services start ollama" dazu,
                        # sonst streiten sich zwei Instanzen um Port 11434
 
-mkdir -p ~/Library/LaunchAgents
+mkdir -p ~/Library/LaunchAgents /opt/heim-ki/logs
 cp scripts/launchd/de.heim-ki.ollama-ws.plist ~/Library/LaunchAgents/
 launchctl load -w ~/Library/LaunchAgents/de.heim-ki.ollama-ws.plist
 ```
 
-Damit startet Ollama bei jedem Login LAN-erreichbar. Fragt die macOS-Firewall beim ersten eingehenden Zugriff nach, „eingehende Verbindungen erlauben" bestätigen. (Wer stattdessen die [Ollama-App für macOS](https://ollama.com/download/mac) nutzt: Die liest `launchctl setenv OLLAMA_HOST "0.0.0.0:11434"` aus — das ist der von Ollama dokumentierte Weg für die App, muss aber nach jedem Neustart erneut gesetzt werden, bevor die App startet.)
+**2. Schlüsselpaar für den Tunnel erzeugen** (auf der Workstation):
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ollama_tunnel -N ""
+```
+
+**3. Host-Key des Docker-Hosts hinterlegen** — und den Fingerprint prüfen, sonst könnte sich im LAN etwas als Docker-Host ausgeben:
+
+```bash
+ssh-keyscan <DOCKER-HOST-IP> >> ~/.ssh/known_hosts
+```
+
+Fingerprint gegen `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` **auf dem Docker-Host** abgleichen.
+
+**4. Auf dem Docker-Host** einen eigenen, stark eingeschränkten Systemaccount für den Tunnel anlegen:
+
+```bash
+sudo useradd --system --create-home --shell /usr/sbin/nologin ollama-tunnel
+sudo -u ollama-tunnel mkdir -p ~ollama-tunnel/.ssh
+sudo -u ollama-tunnel tee ~ollama-tunnel/.ssh/authorized_keys <<'EOF'
+restrict,port-forwarding,permitlisten="127.0.0.1:11435" ssh-ed25519 AAAA... kommentar
+EOF
+sudo -u ollama-tunnel chmod 600 ~ollama-tunnel/.ssh/authorized_keys
+```
+
+`restrict` schaltet zunächst alles ab (Port-, Agent-, X11-Forwarding, PTY); `port-forwarding` schaltet die Weiterleitung als einziges wieder an — ohne dieses Schlüsselwort käme der Tunnel gar nicht zustande, denn `permitlisten` begrenzt nur, es aktiviert nichts. `permitlisten` begrenzt den Remote-Forward (`-R`) auf genau `127.0.0.1:11435`. `nologin` ist unproblematisch, weil `ssh -N` keine Shell startet.
+
+**Restrisiko:** `port-forwarding` reaktiviert jede Forward-Art, auch lokale (`-L`) und dynamische (`-D`) Forwards — `permitlisten` schränkt nur den Remote-Listener ein, nicht die Forward-Richtung. Ein kompromittierter Tunnel-Key erlaubt also weiterhin Pivoting vom Docker-Host aus; dafür gibt es keine per-Key-Option in `authorized_keys`. Wer das zusätzlich schließen will, ergänzt optional in der `sshd_config` des Docker-Hosts:
+
+```
+Match User ollama-tunnel
+    AllowTcpForwarding remote
+    PermitListen 127.0.0.1:11435
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTTY no
+```
+
+`AllowTcpForwarding remote` ist der First-Class-Mechanismus, der genau `-R` erlaubt und `-L`/`-D` ausschließt. Der Tunnel funktioniert auch ohne diesen Match-Block — er schließt nur das genannte Pivoting-Restrisiko.
+
+**5. Tunnel-Agent auf der Workstation installieren** ([`scripts/launchd/de.heim-ki.ollama-tunnel.plist`](scripts/launchd/de.heim-ki.ollama-tunnel.plist), `DOCKER-HOST-IP` und `BENUTZER` in der Datei vorher ersetzen):
+
+```bash
+mkdir -p ~/Library/LaunchAgents /opt/heim-ki/logs
+cp scripts/launchd/de.heim-ki.ollama-tunnel.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/de.heim-ki.ollama-tunnel.plist
+```
+
+**6. Verhalten bei abwesendem Notebook:** Ist der Mac aus oder unterwegs, steht der Tunnel nicht — `ollama-ws.heim.lan` antwortet dann mit `502 Bad Gateway`. Das ist so gewollt, kein Fehlerfall.
 
 **Achtung Ruhezustand:** Ein zugeklapptes MacBook schläft — und ein schlafender Mac beantwortet keine Ollama-Anfragen. Für den Workstation-Einsatz den Ruhezustand am Netzteil deaktivieren (*Systemeinstellungen → Energie*, „Ruhezustand des Computers verhindern") oder `caffeinate` nutzen.
 
@@ -259,7 +314,11 @@ Zusätzlich muss Windows den Port 11434 in die WSL-VM weiterleiten (PowerShell a
 
 ```powershell
 netsh interface portproxy add v4tov4 listenport=11434 listenaddress=0.0.0.0 connectport=11434 connectaddress=<WSL-IP>
-New-NetFirewallRule -DisplayName "Ollama WSL" -Direction Inbound -LocalPort 11434 -Protocol TCP -Action Allow
+
+# -RemoteAddress und -Profile sind wichtig: ohne sie gilt die Regel in JEDEM
+# Netz, auch im Profil "Öffentlich" — und Ollama hat keine Authentifizierung.
+New-NetFirewallRule -DisplayName "Ollama WSL" -Direction Inbound -LocalPort 11434 `
+  -Protocol TCP -Action Allow -RemoteAddress <DOCKER-HOST-IP> -Profile Private
 ```
 
 **Stolperfallen des WSL-Wegs:**
@@ -298,7 +357,7 @@ Der NGINX proxyt dann:
 > 2. **`hosts`-Datei auf jedem Client** (Windows: `C:\Windows\System32\drivers\etc\hosts`, Linux/macOS: `/etc/hosts`): drei Zeilen mit `<docker-host-ip> chat.heim.lan ollama.heim.lan ollama-ws.heim.lan`. Funktioniert sofort, skaliert aber schlecht — auf Smartphones praktisch nicht machbar.
 > 3. **Kompromiss ohne Zusatzsoftware:** Den Docker-Host in der Fritz!Box z. B. `chat` nennen — dann erreicht der Haushalt Open WebUI unter `http://chat.fritz.box` (dafür in der NGINX-Konfiguration `server_name chat.fritz.box;` ergänzen bzw. als `default_server` arbeiten). Die beiden Ollama-API-Namen entfallen dabei; wer die APIs direkt braucht, nutzt dann `<docker-host-ip>:Port`.
 
-**Schritt 2 — NGINX-Konfiguration:** Die fertige Konfiguration liegt in diesem Repo unter [`nginx/heim-ki.conf`](nginx/heim-ki.conf) — vor dem Kopieren `<WORKSTATION-IP>` durch die IP der Workstation ersetzen. Die wichtigsten Blöcke (gekürzt):
+**Schritt 2 — NGINX-Konfiguration:** Die fertige Konfiguration liegt in diesem Repo unter [`nginx/heim-ki.conf`](nginx/heim-ki.conf) — vor dem Kopieren `<LAN-CIDR>` durch das eigene Heimnetz ersetzen (z. B. `192.168.1.0/24`). Die wichtigsten Blöcke (gekürzt):
 
 ```nginx
 # Open WebUI
@@ -321,21 +380,45 @@ server {
     }
 }
 
-# Ollama API (Docker-Host) — Workstation-Block analog, siehe Datei
+# Ollama API (Docker-Host) — Workstation-Block analog, siehe Datei (proxyt
+# dort auf 127.0.0.1:11435, den SSH-Tunnel-Zielport aus §5)
 server {
     listen 80;
     server_name ollama.heim.lan;
 
+    # Ollama bringt KEINE eigene Authentifizierung mit — deshalb IP-Allowlist
+    # UND Basic Auth (satisfy all = beides nötig, nicht nur eins von beiden):
+    satisfy all;
+    allow <LAN-CIDR>;
+    deny  all;
+    auth_basic           "Heim-KI Ollama";
+    auth_basic_user_file /etc/nginx/heim-ki.htpasswd;
+
     location / {
         proxy_pass http://127.0.0.1:11434;
+        # Credentials nicht an Ollama weiterreichen — es kann nichts damit
+        # anfangen und würde sie nur mitloggen:
+        proxy_set_header Authorization "";
         # Ollama lehnt fremde Host-Header je nach Version als Schutz vor
-        # DNS-Rebinding ab (403) — deshalb localhost senden, nicht $host:
+        # DNS-Rebinding ab (403) — deshalb localhost senden, nicht $host.
+        # Vertretbar NUR, weil die auth_basic oben davorsteht:
         proxy_set_header Host 127.0.0.1:11434;
         proxy_read_timeout 600s;   # große Modelle brauchen Zeit
         proxy_buffering off;       # Token-Streaming
     }
 }
 ```
+
+**Basic-Auth-Passwortdatei anlegen:** Die Ollama-vHosts oben verlangen zusätzlich zur IP-Allowlist eine Basic Auth — dafür einmalig eine Passwortdatei anlegen:
+
+```bash
+sudo apt install apache2-utils   # Paket mit htpasswd (Debian/Ubuntu)
+sudo htpasswd -c /etc/nginx/heim-ki.htpasswd heim-ki
+sudo chown root:www-data /etc/nginx/heim-ki.htpasswd
+sudo chmod 640 /etc/nginx/heim-ki.htpasswd
+```
+
+⚠️ **Nur für diese HTTP-Variante:** Basic Auth überträgt das Passwort base64-kodiert im Klartext, bei jedem Request — jedes mitlesende Gerät im LAN kennt es danach. Für den Dauerbetrieb §10 (HTTPS) einrichten; diese Datei ist als Zwischenschritt vor der mkcert-Einrichtung gedacht.
 
 Installieren und aktivieren:
 
@@ -352,7 +435,7 @@ sudo brew services restart nginx
 
 Die Konfiguration selbst ist auf beiden Systemen identisch — Open WebUI lauscht auf `127.0.0.1:3000` und Ollama auf `127.0.0.1:11434`, egal ob Ollama im Container (Linux) oder nativ (macOS) läuft.
 
-**Falls Ollama über den Proxy `403 Forbidden` liefert:** Das ist Ollamas Schutz gegen fremde Host-/Origin-Header. Die Konfiguration oben umgeht das bereits (`proxy_set_header Host 127.0.0.1:11434;`); alternativ kann man Ollama mit `OLLAMA_ORIGINS=*` (bzw. einer konkreten Liste) starten.
+**Falls Ollama über den Proxy `403 Forbidden` liefert:** Das ist Ollamas Schutz gegen fremde Host-/Origin-Header. Die Konfiguration oben umgeht das bereits (`proxy_set_header Host 127.0.0.1:11434;`). `OLLAMA_ORIGINS=*` löst das Problem zwar auch, ist aber keine gute Idee: damit darf jede beliebige Webseite, die jemand im Haushalt öffnet, Requests an die API schicken. Die Umgehung des Host-Checks ist hier nur deshalb vertretbar, weil im NGINX Allowlist und Basic Auth davorstehen.
 
 Jetzt sind beide Ollama-APIs unter ordentlichen Base-URLs im LAN erreichbar — genau wie im Post beschrieben. In Open WebUI kann man unter *Admin-Einstellungen → Verbindungen* beide URLs (`http://ollama.heim.lan` und `http://ollama-ws.heim.lan`) als Ollama-Endpunkte eintragen. Ist die Workstation aus, nutzt man einfach die Modelle des Docker-Hosts.
 
@@ -420,24 +503,47 @@ Der Indexer auf dem Host erreicht ihn unter `127.0.0.1:8000`, das Open-WebUI-Too
 ```bash
 # Linux:
 sudo mkdir -p /srv/scripts /srv/dokumente
-sudo cp scripts/rag-indexer.py scripts/requirements.txt /srv/scripts/
-sudo chown -R "$USER" /srv/scripts /srv/dokumente   # sonst scheitern venv-Anlage,
-                                                    # Testlauf und Dokumente-Ablegen
-python3 -m venv /srv/scripts/.venv
-/srv/scripts/.venv/bin/pip install -r /srv/scripts/requirements.txt
+sudo cp scripts/rag-indexer.py scripts/docscan.py scripts/requirements.txt /srv/scripts/
 
-# Testlauf (Dokumente vorher nach /srv/dokumente legen; mit sudo, weil das
-# Manifest /srv/rag-index-state.json angelegt wird — wie später beim Timer):
-sudo /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py
+# Systemaccount für den nächtlichen Lauf:
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin heim-ki
+sudo install -d -o heim-ki -g heim-ki -m 0750 /srv/heim-ki
+
+# /srv/scripts gehört bewusst root: der Timer führt den Inhalt aus, und was
+# root ausführt, darf der Login-User nicht ändern können.
+sudo chown -R root:root /srv/scripts
+sudo chmod -R go-w /srv/scripts
+
+# venv mit sudo bauen, damit es ebenfalls root gehört:
+sudo python3 -m venv /srv/scripts/.venv
+sudo /srv/scripts/.venv/bin/pip install -r /srv/scripts/requirements.txt
+
+# Dokumente: der Login-User schreibt, der Dienst liest. setgid, damit neue
+# Dateien die Gruppe erben; nicht world-readable.
+sudo chown -R "$USER":heim-ki /srv/dokumente
+sudo chmod 2750 /srv/dokumente
+```
+
+Dokumente vorher nach `/srv/dokumente` legen. `scripts/docscan.py` ist neu und **muss** mitkopiert werden, sonst scheitert der Import in `rag-indexer.py`. Einen echten Testlauf gibt es weiter unten unter „3. Nächtlich laufen lassen" — dort startet er als der `heim-ki`-Account über den systemd-Dienst, nicht per direktem Python-Aufruf.
+
+**Nur für Bestandsinstallationen:** Wer `/srv/scripts` schon vor dieser Härtung eingerichtet hatte, muss das Indexer-Manifest umziehen — sonst indexiert der nächste Lauf alle Dokumente noch einmal komplett neu:
+
+```bash
+sudo install -d -o heim-ki -g heim-ki -m 0750 /srv/heim-ki
+sudo mv /srv/rag-index-state.json /srv/heim-ki/
+sudo chown heim-ki:heim-ki /srv/heim-ki/rag-index-state.json
 ```
 
 ```bash
 # macOS (Pfade analog, plus Log- und Backup-Verzeichnis für die launchd-Jobs;
 # alles gehört danach dem eingeloggten Nutzer, denn die Jobs laufen als
-# LaunchAgents in dessen Session — siehe §3, "Unbeaufsichtigter Betrieb"):
+# LaunchAgents in dessen Session — siehe §3, "Unbeaufsichtigter Betrieb". Anders
+# als unter Linux gibt es hier keine Rechtegrenze zwischen Login-Nutzer und
+# Dienst-Account zu schützen, denn beide sind identisch — "$USER" ist hier
+# also unproblematisch, wo es unter Linux ein Fehler wäre):
 sudo mkdir -p /opt/heim-ki/scripts /opt/heim-ki/dokumente /opt/heim-ki/logs /opt/heim-ki/backups
 sudo chown -R "$USER" /opt/heim-ki
-cp scripts/rag-indexer.py scripts/requirements.txt /opt/heim-ki/scripts/
+cp scripts/rag-indexer.py scripts/docscan.py scripts/requirements.txt /opt/heim-ki/scripts/
 python3 -m venv /opt/heim-ki/scripts/.venv
 /opt/heim-ki/scripts/.venv/bin/pip install -r /opt/heim-ki/scripts/requirements.txt
 
@@ -461,7 +567,11 @@ sudo systemctl enable --now rag-indexer.timer
 journalctl -u rag-indexer.service
 ```
 
-(Wer lieber Cron mag: `0 2 * * * /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py >> /var/log/rag-indexer.log 2>&1`)
+**Testlauf:** `sudo systemctl start rag-indexer.service`, danach `journalctl -u rag-indexer.service -n 50` — das startet den Dienst inklusive aller Sandbox-Direktiven aus der Unit (`ProtectSystem=strict` usw.) und zeigt deshalb auch Fehler, die genau diese Sandbox verursacht; ein direkter Aufruf per `sudo -u heim-ki /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py` umgeht die Unit komplett und würde solche Fehler nicht zeigen.
+
+Beim allerersten Lauf lädt Docling seine Layout-/Tabellenmodelle (und je nach installierter Version RapidOCR- oder EasyOCR-Modelle) über HuggingFace nach — das dauert spürbar. Dank `HOME`, `HF_HOME` und `XDG_CACHE_HOME` in der Unit landen sie unterhalb von `/srv/heim-ki`, nicht in einem für den Systemaccount (`--no-create-home`) gar nicht existierenden `$HOME` — deshalb muss `/srv/heim-ki` bereits `heim-ki` gehören (oben mit `install -d -o heim-ki -g heim-ki` erledigt). Bekannte Einschränkung: Sollte eine künftige docling-Version stattdessen paketrelativ ins venv schreiben wollen, scheitert das unter `ProtectSystem=strict` trotzdem — das ist beim ersten Lauf mit der tatsächlich installierten docling-Version zu prüfen.
+
+(Wer lieber Cron mag: `0 2 * * * sudo -u heim-ki /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py >> /var/log/rag-indexer.log 2>&1` — läuft dann allerdings ohne die systemd-Sandbox aus der `.service`-Datei.)
 
 *macOS* — als launchd-Job ([`scripts/launchd/`](scripts/launchd/)); die Pfade in der plist passen zu `/opt/heim-ki`. Der Job läuft bewusst als **LaunchAgent in der Nutzer-Session** (nicht als root-Daemon), denn er braucht um 2:00 Uhr das native Ollama und den Chroma-Container — und beide existieren nur in einer angemeldeten Session mit laufendem Docker Desktop/OrbStack (→ §3, „Unbeaufsichtigter Betrieb": automatische Anmeldung + „Start at login" einrichten, sonst läuft der Index nachts ins Leere):
 
@@ -574,13 +684,15 @@ sudo nginx -t && sudo brew services restart nginx
 
 Gesichert werden muss, was nicht wiederbeschaffbar ist: das **Open-WebUI-Volume** (Nutzer, Chats, Wissenssammlungen), das **Chroma-Volume** (RAG-Index aus Variante B) und das Indexer-Manifest. Die Ollama-Modelle sind bewusst ausgenommen — die holt `ollama pull` jederzeit neu.
 
-Das Skript [`scripts/backup.sh`](scripts/backup.sh) erledigt genau das (inklusive Aufräumen alter Stände, Standard: 14 Tage) und läuft täglich um 3:30 Uhr — nach dem RAG-Indexer.
+Das Skript [`scripts/backup.sh`](scripts/backup.sh) erledigt genau das (inklusive Aufräumen alter Stände, Standard: 14 Tage) und läuft täglich um 3:30 Uhr — nach dem RAG-Indexer. Für das Tar-Packen der Volumes startet es einen kleinen Alpine-Container; das Image ist per `ALPINE_IMAGE` auf einen festen Digest gepinnt (überschreibbar per Umgebungsvariable), damit nicht bei jedem Lauf ein frisches, ungeprüftes `:latest`-Image gezogen wird.
 
 *Linux* — per systemd-Timer:
 
 ```bash
 sudo mkdir -p /srv/scripts    # existiert schon, falls §7 Variante B eingerichtet wurde
-sudo cp scripts/backup.sh /srv/scripts/ && sudo chmod +x /srv/scripts/backup.sh
+sudo cp scripts/backup.sh /srv/scripts/
+sudo chown root:root /srv/scripts/backup.sh
+sudo chmod 755 /srv/scripts/backup.sh
 sudo cp scripts/systemd/heim-ki-backup.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now heim-ki-backup.timer
@@ -589,6 +701,8 @@ sudo systemctl enable --now heim-ki-backup.timer
 sudo systemctl start heim-ki-backup.service
 journalctl -u heim-ki-backup.service
 ```
+
+Das Backup bleibt bewusst root, weil es den Docker-Socket braucht — die docker-Gruppe wäre root-äquivalent, brächte also keinen echten Gewinn. Der eigentliche Schutz liegt darin, dass `/srv/scripts` root gehört (§7): Der Login-User kann `backup.sh` nicht verändern, selbst wenn das Skript root-Rechte hat.
 
 *macOS* — per launchd-Job ([`scripts/launchd/de.heim-ki.backup.plist`](scripts/launchd/de.heim-ki.backup.plist), Ziel `/opt/heim-ki/backups`). Auch dieser Job läuft als **LaunchAgent in der Nutzer-Session**, denn die docker-CLI erreicht den Daemon von Docker Desktop/OrbStack nur dort (der Socket liegt unter `~/.docker/run/docker.sock`, nicht unter `/var/run/docker.sock`). Ist Docker nachts nicht erreichbar, bricht `backup.sh` mit Fehler ab, statt still ein leeres Backup zu schreiben — für zuverlässige Nachtläufe also §3, „Unbeaufsichtigter Betrieb" einrichten:
 
