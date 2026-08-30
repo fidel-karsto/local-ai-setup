@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- SSH-Reverse-Tunnel: stellt das lokale Ollama (127.0.0.1:11434) auf dem
+     Docker-Host unter 127.0.0.1:11435 bereit, wo der NGINX es abholt
+     (vHost ollama-ws.heim.lan).
+
+     Ist das Notebook aus oder unterwegs, steht der Tunnel nicht und
+     ollama-ws.heim.lan antwortet mit 502. Das ist so gewollt.
+
+     Einmalige Vorbereitung auf der Workstation:
+       ssh-keygen -t ed25519 -f ~/.ssh/id_ollama_tunnel -N ""
+       ssh-keyscan DOCKER-HOST-IP >> ~/.ssh/known_hosts   # Fingerprint prüfen!
+     Auf dem Docker-Host (siehe Tutorial §5):
+       sudo useradd --system --create-home --shell /usr/sbin/nologin ollama-tunnel
+       # in ~ollama-tunnel/.ssh/authorized_keys, EINE Zeile:
+       #   restrict,port-forwarding,permitlisten="127.0.0.1:11435" ssh-ed25519 AAAA...
+
+     Installation (DOCKER-HOST-IP und BENUTZER unten vorher ersetzen):
+       mkdir -p ~/Library/LaunchAgents /opt/heim-ki/logs
+       cp scripts/launchd/de.heim-ki.ollama-tunnel.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/de.heim-ki.ollama-tunnel.plist -->
+<dict>
+    <key>Label</key>
+    <string>de.heim-ki.ollama-tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/ssh</string>
+        <string>-N</string>
+        <string>-T</string>
+        <!-- Ohne ExitOnForwardFailure bliebe eine SSH-Verbindung bestehen,
+             deren Weiterleitung fehlgeschlagen ist — launchd merkte nichts
+             davon und der Tunnel wäre still tot. -->
+        <string>-o</string><string>ExitOnForwardFailure=yes</string>
+        <string>-o</string><string>ServerAliveInterval=30</string>
+        <string>-o</string><string>ServerAliveCountMax=3</string>
+        <string>-o</string><string>IdentitiesOnly=yes</string>
+        <string>-i</string><string>/Users/BENUTZER/.ssh/id_ollama_tunnel</string>
+        <string>-R</string><string>127.0.0.1:11435:127.0.0.1:11434</string>
+        <string>ollama-tunnel@DOCKER-HOST-IP</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/opt/heim-ki/logs/ollama-tunnel.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/heim-ki/logs/ollama-tunnel.log</string>
+</dict>
+</plist>
