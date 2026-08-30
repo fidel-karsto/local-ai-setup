@@ -19,6 +19,11 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+# Verbirgt /dev (inkl. /dev/nvidia*) vor dem Dienst — daher keine GPU für
+# Docling: torch.cuda.is_available() liefert False, Layout/OCR laufen auf der
+# CPU (spürbar längerer Nachtlauf, aber kein Fehler). Wird die GPU gebraucht,
+# diese Zeile entfernen — das gibt dem Dienst vollen /dev-Zugriff zurück und
+# ist bewusst gegen die zusätzliche Angriffsfläche abzuwägen.
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes

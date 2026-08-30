@@ -182,7 +182,7 @@ docker exec ollama ollama pull llama3.2:3b
 docker exec ollama ollama pull bge-m3
 ```
 
-**First login & registration:** On first launch, create an admin account. Then close open self-registration — otherwise anyone on the LAN can create an account: set `ENABLE_SIGNUP=false` in the `.env` and run `docker compose up -d` again (or in the *Admin Settings* set the default role for new users to "Pending" and approve family members individually).
+**First login & registration:** On first launch, create an admin account. Then close open self-registration — otherwise anyone on the LAN can create an account: Open WebUI only reads `ENABLE_SIGNUP` from the `.env` on the very first start, after that the value comes from the database — so setting `ENABLE_SIGNUP=false` in the `.env` later and running `docker compose up -d` again has no effect. Instead, flip the self-registration toggle in the *Admin Settings*. Thanks to `DEFAULT_USER_ROLE=pending`, new accounts land on "Pending" anyway and must be approved individually by an admin.
 
 **Realistic expectations with 4 GB VRAM:** `llama3.2:3b` (~2 GB) and `bge-m3` (~1.2 GB) each fit comfortably into VRAM individually — but with RAG, both are needed in quick succession (first the embedding of the question, then the answer from the chat model). With `OLLAMA_MAX_LOADED_MODELS=1`, the models take turns (short loading pauses per request); without that limit, some layers end up on the CPU (it works, but noticeably slower). `OLLAMA_KEEP_ALIVE=30m` at least prevents models from being unloaded again after just 5 minutes of idle time. Anyone who uses RAG regularly benefits significantly from more VRAM — or should deliberately compute embeddings on the CPU.
 
@@ -412,10 +412,21 @@ server {
 **Create the basic-auth password file:** the Ollama vHosts above require basic auth in addition to the IP allowlist — set up a password file once for this:
 
 ```bash
+# Linux (Debian/Ubuntu):
 sudo apt install apache2-utils   # package providing htpasswd (Debian/Ubuntu)
 sudo htpasswd -c /etc/nginx/heim-ki.htpasswd heim-ki
 sudo chown root:www-data /etc/nginx/heim-ki.htpasswd
 sudo chmod 640 /etc/nginx/heim-ki.htpasswd
+
+# macOS: htpasswd is part of macOS's built-in (deprecated) Apache and already
+# lives at /usr/sbin/htpasswd — no Homebrew package needed. NGINX runs as
+# root here (see "sudo brew services start nginx" further below), so keep
+# ownership/mode correspondingly tight; there is no www-data-equivalent
+# group on macOS:
+sudo mkdir -p /opt/homebrew/etc/nginx
+sudo /usr/sbin/htpasswd -c /opt/homebrew/etc/nginx/heim-ki.htpasswd heim-ki
+sudo chown root:wheel /opt/homebrew/etc/nginx/heim-ki.htpasswd
+sudo chmod 600 /opt/homebrew/etc/nginx/heim-ki.htpasswd
 ```
 
 ⚠️ **For this HTTP variant only:** basic auth transmits the password base64-encoded in plain text, on every request — any device sniffing traffic on the LAN then knows it. Set up §10 (HTTPS) for permanent operation; this file is meant as an intermediate step before the mkcert setup.
@@ -569,7 +580,7 @@ sudo systemctl enable --now rag-indexer.timer
 journalctl -u rag-indexer.service
 ```
 
-**Test run:** `sudo systemctl start rag-indexer.service`, then `journalctl -u rag-indexer.service -n 50` — this starts the service including all the sandbox directives from the unit (`ProtectSystem=strict` etc.) and therefore also surfaces errors caused specifically by that sandbox; calling it directly via `sudo -u heim-ki /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py` bypasses the unit entirely and would not show such errors.
+**Test run:** `sudo systemctl start rag-indexer.service`, then `journalctl -u rag-indexer.service -n 50` — this starts the service including all the sandbox directives from the unit (`ProtectSystem=strict` etc.) and therefore also surfaces errors caused specifically by that sandbox; calling it directly via `sudo -u heim-ki /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py` bypasses the unit entirely and would not show such errors. Side effect of `PrivateDevices=yes` in the sandbox: the service no longer sees `/dev/nvidia*`, `torch.cuda.is_available()` returns `False`, and Docling falls back to the CPU for layout/OCR — a noticeably longer nightly run depending on the document set (see the comment in the unit file for details and a workaround).
 
 On the very first run, Docling downloads its layout/table models (and, depending on the installed version, RapidOCR or EasyOCR models) from HuggingFace — this noticeably takes a while. Thanks to `HOME`, `HF_HOME`, and `XDG_CACHE_HOME` in the unit, they land under `/srv/heim-ki` rather than in a `$HOME` that doesn't even exist for the system account (`--no-create-home`) — which is why `/srv/heim-ki` must already be owned by `heim-ki` (done above via `install -d -o heim-ki -g heim-ki`). Known limitation: should a future docling version instead want to write package-relatively into the venv, that would still fail under `ProtectSystem=strict` — this needs to be checked on the first run with whichever docling version is actually installed.
 
@@ -768,7 +779,8 @@ A minute later, the workstation's Ollama is available at `ollama-ws.heim.lan` (t
 | Containers don't see the GPU | Test: `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`. If that fails: `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`. After a driver update: restart the host. |
 | Responses suddenly very slow | `docker exec ollama ollama ps` shows whether the model is (partially) running on the CPU (`XX%/YY% CPU/GPU`). Fix: a smaller/more heavily quantized model, or the §4 tips (`OLLAMA_MAX_LOADED_MODELS=1`). |
 | First prompt "hangs" | The model is currently being loaded into VRAM — this takes a while for larger models. `OLLAMA_KEEP_ALIVE` (§4) prevents frequent reloading. |
-| `403 Forbidden` from `ollama.heim.lan` | Ollama's Host header protection — the §6 configuration therefore sends `Host 127.0.0.1:11434`; check whether the repo's configuration is really active (`nginx -T \| grep -A5 ollama`). |
+| `403 Forbidden` from `ollama.heim.lan` | Since the security hardening, usually the IP allowlist (`allow <LAN-CIDR>; deny all;` in §6) — access from outside the allowed network is rejected with 403; check which IP the client is coming from. Only after ruling that out does Ollama's own Host header protection come into play — the §6 configuration therefore sends `Host 127.0.0.1:11434`; check whether the repo's configuration is really active (`nginx -T \| grep -A5 ollama`). |
+| `401 Unauthorized` from `ollama.heim.lan` | Missing or wrong basic-auth credentials — since the hardening, the Ollama vHosts require `auth_basic` (§6) in addition to the IP allowlist; check or reset the credentials in the password file (`sudo htpasswd /etc/nginx/heim-ki.htpasswd heim-ki`). |
 | Upload fails with `413 Request Entity Too Large` | `client_max_body_size` missing/too small — included in `nginx/heim-ki.conf` (100 MB), reload NGINX. |
 | Docling container crashes / host swaps on large PDFs | Docling OCR is RAM-hungry. Split large scans, or give the service a `mem_limit` in the compose file; if needed, upload documents one at a time. |
 | `ollama-ws.heim.lan` dead after a Windows restart (WSL path) | The WSL IP has changed — reset the port proxy, or switch to *mirrored networking* or the native app (§5). |
