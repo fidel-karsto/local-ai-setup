@@ -33,15 +33,23 @@ ReadWritePaths=/srv/heim-ki
 # Pipeline die Layout- und Tabellenmodelle beim ersten Lauf über den
 # HuggingFace Hub nach — per Default landen die unter $HOME/.cache/huggingface.
 # Für heim-ki (--no-create-home) existiert kein $HOME, und ProtectHome=yes
-# blendet /home für den Dienst ohnehin komplett aus. Cache deshalb aktiv
-# ins freigegebene ReadWritePaths-Verzeichnis umlenken:
+# blendet /home für den Dienst ohnehin komplett aus. HOME deshalb aktiv auf
+# ein Verzeichnis unterhalb des freigegebenen ReadWritePaths umlenken — das
+# fängt nicht nur HuggingFace ab, sondern jede Bibliothek, die nach
+# $HOME/.cache, $HOME/.EasyOCR, $HOME/.rapidocr o. ä. schreiben will:
+Environment=HOME=/srv/heim-ki/.home
 Environment=HF_HOME=/srv/heim-ki/.cache/huggingface
 Environment=XDG_CACHE_HOME=/srv/heim-ki/.cache
-# Der von docling standardmäßig genutzte OCR-Motor easyocr lädt seine
-# Modelle unabhängig davon und ignoriert HF_HOME/XDG_CACHE_HOME — ohne
-# dieses Override würde er beim ersten Lauf ebenfalls nach $HOME/.EasyOCR
-# schreiben wollen und an derselben ProtectHome-Sandbox scheitern:
-Environment=EASYOCR_MODULE_PATH=/srv/heim-ki/.cache/easyocr
+# Welcher OCR-Motor in der jeweils installierten docling-Version aktiv ist
+# und wohin er cached, ist NICHT fix: requirements.txt pinnt nur docling>=2.0
+# ohne Obergrenze. In aktuellen docling-Versionen ist RapidOCR der Default
+# statt easyocr und schreibt seine Modelle nach ~/.rapidocr/models/; ältere
+# Versionen mit easyocr nutzen ~/.EasyOCR/. Die HOME-Umlenkung oben deckt
+# beide Fälle ab, solange der Motor tatsächlich unter $HOME cached. Schreibt
+# eine künftige Version stattdessen paketrelativ ins venv (z. B. nach
+# site-packages), scheitert das unter ProtectSystem=strict trotzdem — das
+# muss auf dem Zielhost mit der dort installierten docling-Version geprüft
+# werden.
 
 # Konfiguration bei Bedarf (Defaults siehe Skript-Kopf):
 # Environment=DOCS_DIR=/srv/dokumente
