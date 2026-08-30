@@ -1041,8 +1041,15 @@ Expected: für alle vier Dateien `OK`
 Run: `grep -rn "WORKSTATION-IP" nginx/`
 Expected: keine Ausgabe
 
-Run: `grep -rn "0\.0\.0\.0" scripts/launchd/`
-Expected: keine Ausgabe
+Beim `0.0.0.0`-Check muss auf den **Wert** geprüft werden, nicht auf jede
+Erwähnung: der Kommentarkopf der plist begründet ausdrücklich, warum *nicht*
+an `0.0.0.0` gebunden wird, und enthält die Zeichenfolge deshalb legitim.
+
+Run: `grep -c "<string>0\.0\.0\.0" scripts/launchd/de.heim-ki.ollama-ws.plist`
+Expected: `0`
+
+Run: `grep -c "<string>127\.0\.0\.1:11434</string>" scripts/launchd/de.heim-ki.ollama-ws.plist`
+Expected: `1`
 
 Run: `grep -rn "/tmp/" scripts/launchd/`
 Expected: keine Ausgabe
