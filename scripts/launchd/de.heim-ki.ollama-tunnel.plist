@@ -14,15 +14,31 @@
      Auf dem Docker-Host (siehe Tutorial §5):
        sudo useradd --system --create-home --shell /usr/sbin/nologin ollama-tunnel
        # in ~ollama-tunnel/.ssh/authorized_keys, EINE Zeile:
-       #   restrict,port-forwarding,permitlisten="127.0.0.1:11435",permitopen="none" ssh-ed25519 AAAA...
+       #   restrict,port-forwarding,permitlisten="127.0.0.1:11435" ssh-ed25519 AAAA...
        # "restrict" schaltet alles ab (Port-, Agent-, X11-Forwarding, PTY).
        # "port-forwarding" schaltet die Weiterleitung als einziges wieder an —
        # ohne dieses Schlüsselwort käme der Tunnel gar nicht zustande, denn
-       # permitlisten und permitopen BEGRENZEN nur, sie aktivieren nichts.
-       # permitlisten begrenzt den Remote-Forward (-R) auf genau diesen
-       # Listener; permitopen="none" schliesst lokale und dynamische Forwards
-       # (-L/-D) aus, damit ein kompromittierter Tunnel-Key vom Docker-Host
-       # aus kein Pivoting ins übrige Netz erlaubt.
+       # permitlisten BEGRENZT nur, es aktiviert nichts. permitlisten begrenzt
+       # den Remote-Forward (-R) auf genau diesen Listener.
+       #
+       # Restrisiko: "port-forwarding" reaktiviert JEDE Forward-Art, auch
+       # lokale (-L) und dynamische (-D) Forwards — permitlisten schränkt nur
+       # den Remote-Listener ein, nicht die Forward-Richtung. Ein
+       # kompromittierter Tunnel-Key erlaubt also weiterhin Pivoting vom
+       # Docker-Host aus. Dafür gibt es keine per-Key-Option in
+       # authorized_keys, die ausschliesslich Remote-Forwards zulässt.
+       # Empfohlene, aber optionale Zusatzhärtung gegen dieses Restrisiko:
+       # ein Match-Block in der sshd_config des Docker-Hosts, der -L/-D
+       # bereits auf Protokollebene ausschliesst, z.B.:
+       #   Match User ollama-tunnel
+       #       AllowTcpForwarding remote
+       #       PermitListen 127.0.0.1:11435
+       #       AllowAgentForwarding no
+       #       X11Forwarding no
+       #       PermitTTY no
+       # AllowTcpForwarding remote ist der First-Class-Mechanismus, der genau
+       # -R erlaubt und -L/-D ausschliesst. Der Tunnel funktioniert auch ohne
+       # diesen Match-Block — er schliesst nur das Pivoting-Restrisiko.
 
      Installation (DOCKER-HOST-IP und BENUTZER unten vorher ersetzen):
        mkdir -p ~/Library/LaunchAgents /opt/heim-ki/logs
