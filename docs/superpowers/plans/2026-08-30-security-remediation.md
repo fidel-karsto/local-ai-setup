@@ -523,24 +523,29 @@ alle anderen Images bereits (`.env.example:4-13`); hier fehlt es.
 - Consumes: nichts
 - Produces: Umgebungsvariable `ALPINE_IMAGE`, erwähnt in Task 8
 
-- [ ] **Step 1: Digest ermitteln**
+- [ ] **Step 1: Digest gegenprüfen**
 
-Auf einer Maschine mit Docker ausführen:
+Der Digest ist bereits ermittelt und verifiziert (2026-08-30, Docker 29.6.1):
 
-```bash
-docker pull alpine:3.22
-docker inspect --format='{{index .RepoDigests 0}}' alpine:3.22
+```
+alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 ```
 
-Ausgabe sieht aus wie `alpine@sha256:<64 Hexzeichen>`. Diesen kompletten String
-in Step 2 einsetzen. Ist kein Docker verfügbar, geht auch:
+Das ist ein OCI Image Index (Manifest-Liste) für Alpine **3.22.5**, gebaut am
+2026-06-22, mit `linux/amd64`, `linux/arm64` und `linux/arm/v6` darin. Wichtig:
+weil es die Manifest-Liste ist und nicht ein einzelnes Plattform-Manifest,
+funktioniert der Pin sowohl auf dem amd64-Docker-Host als auch auf einem
+Apple-Silicon-Mac.
+
+Gegenprobe (optional, braucht Netz):
 
 ```bash
-docker buildx imagetools inspect alpine:3.22 --format '{{.Manifest.Digest}}'
+docker buildx imagetools inspect \
+  alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce \
+  | head -3
 ```
 
-Ohne ermittelten Digest **nicht** weitermachen und keinen Platzhalter
-committen — dann diese Task überspringen und im Bericht als offen melden.
+Expected: `MediaType: application/vnd.oci.image.index.v1+json` und derselbe Digest.
 
 - [ ] **Step 2: Konfigurationsblock ergänzen**
 
@@ -568,10 +573,13 @@ Direkt unter `STATE_FILE="${STATE_FILE:-...}"` (Zeile 19) einfügen:
 
 ```bash
 # Auf einen Digest gepinnt wie die Images in .env.example: dieser Container
-# läuft als root mit Zugriff auf beide Daten-Volumes. Auffrischen mit:
+# läuft als root und sieht beide Daten-Volumes. Es ist bewusst die
+# Manifest-Liste (nicht ein einzelnes Plattform-Manifest), damit der Pin auf
+# amd64 und arm64 gleichermaßen zieht.
+# Stand: alpine 3.22.5, 2026-08-30. Auffrischen mit:
 #   docker pull alpine:3.22
 #   docker inspect --format='{{index .RepoDigests 0}}' alpine:3.22
-ALPINE_IMAGE="${ALPINE_IMAGE:-<HIER-DEN-DIGEST-AUS-STEP-1-EINSETZEN>}"
+ALPINE_IMAGE="${ALPINE_IMAGE:-alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce}"
 ```
 
 - [ ] **Step 3: Verwendung umstellen**
@@ -593,9 +601,17 @@ nachher:
 Run: `bash -n scripts/backup.sh && echo OK`
 Expected: `OK`
 
-Run: `grep -n "alpine@sha256:" scripts/backup.sh`
-Expected: genau eine Zeile, mit vollständigem 64-stelligem Digest — **kein**
-`<HIER-...>` mehr im Text.
+Run: `grep -c "alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce" scripts/backup.sh`
+Expected: `1`
+
+Run: `grep -n "^            alpine tar czf" scripts/backup.sh`
+Expected: keine Ausgabe (der ungepinnte Aufruf ist weg)
+
+Optional, mit Docker und Netz — prüft, dass der gepinnte Digest wirklich
+auflösbar ist und `tar` mitbringt:
+
+Run: `docker run --rm alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce tar --version | head -1`
+Expected: `tar (busybox) 1.37.0` (am 2026-08-30 so verifiziert)
 
 - [ ] **Step 5: Commit**
 
@@ -1425,8 +1441,10 @@ Der Bericht muss klar trennen:
   `systemd-analyze security`, die `curl`-Proben (401/403/200/502),
   `lsof`/`ss` auf den Listen-Adressen, der Indexer-Testlauf als `heim-ki`.
 
-Diese zweite Liste **nicht** als bestanden darstellen. Falls Task 4 mangels
-Docker-Digest übersprungen wurde, das ausdrücklich nennen.
+Diese zweite Liste **nicht** als bestanden darstellen.
+
+Der alpine-Digest aus Task 4 ist bereits verifiziert (Manifest-Liste mit
+amd64/arm64, `tar (busybox) 1.37.0` läuft) — dort ist nichts mehr offen.
 
 - [ ] **Bestandsinstallationen: Reihenfolge beim Ausrollen nennen**
 
