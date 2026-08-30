@@ -49,10 +49,15 @@ services:
     environment:
       - TZ=${TZ:-Europe/Berlin}
       - OLLAMA_BASE_URL=http://ollama:11434
-      # Nach dem Anlegen des Admin-Accounts in der .env auf "false" setzen
-      # (oder alternativ in den Admin-Einstellungen die Standardrolle neuer
-      # Nutzer auf "Ausstehend" stellen):
+      # Muss beim ersten Start "true" sein, sonst lässt sich der Admin-Account
+      # gar nicht anlegen. Danach in den ADMIN-EINSTELLUNGEN abschalten — ein
+      # späteres ENABLE_SIGNUP=false in der .env bleibt wirkungslos, weil Open
+      # WebUI diesen Wert nur beim allerersten Start aus der Umgebung liest und
+      # ihn danach aus der Datenbank nimmt.
       - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
+      # Neue Konten landen auf "ausstehend" und müssen freigegeben werden —
+      # damit ist eine offene Registrierung für sich genommen harmlos:
+      - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-pending}
     volumes:
       - open-webui-data:/app/backend/data
     ports:
