@@ -520,6 +520,14 @@ docker compose -f docker-compose.macos.yml --profile rag-batch up -d
 
 The indexer on the host reaches it at `127.0.0.1:8000`; the Open WebUI tool reaches it via the compose network at `http://chroma:8000`.
 
+> **Port 8000 already taken?** The start then fails with `Bind for 0.0.0.0:8000 failed: port is already allocated`. Usually a container from a *different* project is to blame: if it binds `0.0.0.0:8000`, that also blocks this setup's `127.0.0.1:8000`. To find the culprit: `lsof -nP -iTCP:8000 -sTCP:LISTEN` and `docker ps --format '{{.Names}}\t{{.Ports}}'`. The host port can be moved in the `.env`:
+>
+> ```bash
+> CHROMA_HOST_PORT=8001
+> ```
+>
+> This affects **only** the indexer on the host; the Open WebUI tool goes through the compose network and stays on `http://chroma:8000`. In return, the indexer's `CHROMA_URL` has to follow — in the systemd unit or the launchd plist (step 3) and in the test run below: `CHROMA_URL=http://127.0.0.1:8001`. Without that, the nightly job runs into the void.
+
 **2. Set up the indexer** ([`scripts/rag-indexer.py`](scripts/rag-indexer.py)) — with its own venv, so the scheduled call uses the same environment as the installation. On Linux everything lives under `/srv`, on macOS under `/opt/heim-ki` (on the Mac, `/srv` can't be created because of the sealed system volume):
 
 ```bash
@@ -840,6 +848,7 @@ If you suspect one of the protections from §5–§7 isn't taking effect, work t
 | Upload fails with `413 Request Entity Too Large` | `client_max_body_size` missing/too small — included in `nginx/heim-ki.conf` (100 MB), reload NGINX. |
 | Docling container crashes / host swaps on large PDFs | Docling OCR is RAM-hungry. Split large scans, or give the service a `mem_limit` in the compose file; if needed, upload documents one at a time. |
 | `ollama-ws.heim.lan` dead after a Windows restart (WSL path) | The WSL IP has changed — reset the port proxy, or switch to *mirrored networking* or the native app (§5). |
+| `port is already allocated` on startup | Another service holds the host port. Which one? `lsof -nP -iTCP:<port> -sTCP:LISTEN`, plus `docker ps --format '{{.Names}}\t{{.Ports}}'`. Note that a container on `0.0.0.0:<port>` also blocks a `127.0.0.1:<port>` binding. For Chroma the host port can be moved with `CHROMA_HOST_PORT` in the `.env` (§7 Variant B) — then make the indexer's `CHROMA_URL` follow. |
 | "Home Documents" tool finds nothing | Is Chroma running? (`docker ps` → `chroma (healthy)`; a plain `docker compose ps` only shows profile services like `chroma` with `--profile rag-batch` — and on macOS only with `-f docker-compose.macos.yml`). Did the indexer write anything? (Linux: `journalctl -u rag-indexer.service`, macOS: `/opt/heim-ki/logs/rag-indexer.log`). Do the collection name and `chroma_url` in the tool's valves match? |
 | macOS: Ollama painfully slow, Mac fan spinning | Is Ollama accidentally running as a container? On macOS, containers have **no GPU access** — Ollama must run natively (`brew services start ollama`, §3) and Open WebUI must point to `host.docker.internal:11434` via `docker-compose.macos.yml`. |
 | macOS: Open WebUI can't reach Ollama | Is native Ollama running? (`ollama ps`, `brew services list`). The Open WebUI *Connections* must contain `http://host.docker.internal:11434`, not `http://ollama:11434` — there's no Ollama service name in the macOS compose file. |

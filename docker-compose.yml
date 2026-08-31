@@ -101,8 +101,9 @@ services:
       start_period: 120s
 
   # Vektordatenbank für die eigene RAG-Pipeline (README §7, Variante B).
-  # Der Indexer auf dem Host schreibt über 127.0.0.1:8000, das Open-WebUI-Tool
-  # (tools/heim_docs_suche.py) liest über das Compose-Netz (http://chroma:8000).
+  # Der Indexer auf dem Host schreibt über 127.0.0.1:${CHROMA_HOST_PORT}, das
+  # Open-WebUI-Tool (tools/heim_docs_suche.py) liest über das Compose-Netz
+  # (http://chroma:8000) und ist vom Host-Port unabhängig.
   # Eigenes Profil "rag-batch": Variante B braucht Chroma, aber kein Docling.
   chroma:
     image: ${CHROMA_IMAGE:-chromadb/chroma:1.5.9}
@@ -114,7 +115,11 @@ services:
     volumes:
       - chroma-data:/data
     ports:
-      - "127.0.0.1:8000:8000"
+      # Host-Port über die .env umlegbar, falls 8000 schon belegt ist (ein
+      # anderer Container auf 0.0.0.0:8000 blockiert auch dieses 127.0.0.1!).
+      # Wird er geändert, muss CHROMA_URL des Indexers mitziehen — siehe
+      # scripts/systemd/rag-indexer.service bzw. die launchd-plist.
+      - "127.0.0.1:${CHROMA_HOST_PORT:-8000}:8000"
     healthcheck:
       # TCP-Check via bash, Fallback curl — je nachdem, was das Image mitbringt
       test:

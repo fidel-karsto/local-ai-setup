@@ -71,7 +71,11 @@ services:
     volumes:
       - chroma-data:/data
     ports:
-      - "127.0.0.1:8000:8000"
+      # Host-Port über die .env umlegbar, falls 8000 schon belegt ist (ein
+      # anderer Container auf 0.0.0.0:8000 blockiert auch dieses 127.0.0.1!).
+      # Wird er geändert, muss CHROMA_URL des Indexers mitziehen — siehe
+      # scripts/launchd/de.heim-ki.rag-indexer.plist.
+      - "127.0.0.1:${CHROMA_HOST_PORT:-8000}:8000"
     healthcheck:
       test:
         [

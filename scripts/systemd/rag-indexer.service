@@ -56,7 +56,10 @@ Environment=XDG_CACHE_HOME=/srv/heim-ki/.cache
 # muss auf dem Zielhost mit der dort installierten docling-Version geprüft
 # werden.
 
-# Konfiguration bei Bedarf (Defaults siehe Skript-Kopf):
+# Konfiguration bei Bedarf (Defaults siehe Skript-Kopf).
+# CHROMA_URL muss zu CHROMA_HOST_PORT aus der .env passen (Default 8000):
+# wurde der Host-Port dort umgelegt, weil 8000 belegt war, hier dieselbe
+# Portnummer eintragen — sonst findet der Nachtlauf keinen Chroma-Server.
 # Environment=DOCS_DIR=/srv/dokumente
 # Environment=STATE_FILE=/srv/heim-ki/rag-index-state.json
 # Environment=CHROMA_URL=http://127.0.0.1:8000
