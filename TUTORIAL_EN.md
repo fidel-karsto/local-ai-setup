@@ -453,6 +453,14 @@ The configuration itself is identical on both systems — Open WebUI listens on 
 
 Now both Ollama APIs are reachable on the LAN under proper base URLs — for humans and CLI clients, that means entering `http://ollama.heim.lan` in Open WebUI under *Admin Settings → Connections*. That does **not** hold for the workstation: Open WebUI itself runs as a container in the compose bridge network, so a request from there to `ollama-ws.heim.lan` would carry the bridge IP instead of a LAN address (403 at the allowlist), and even with an allowed IP, Open WebUI sends bearer tokens instead of the basic auth NGINX expects for Ollama connections (401) — so the vHost stays reserved for human and CLI clients. For the workstation, enter `http://host.docker.internal:11435` instead, which is exactly what the second tunnel listener from §5 provides on the Docker bridge gateway address (`extra_hosts` in `docker-compose.yml` makes the name resolvable inside the container). If the workstation is off, you simply use the Docker host's models.
 
+To check that this path actually works, query it from inside the container — that's exactly the perspective Open WebUI accesses it from:
+
+```bash
+docker exec open-webui curl -sS http://host.docker.internal:11435/api/tags
+```
+
+If the workstation's model list comes back, everything is fine. A connection error almost always means the bridge gateway address from §5 is wrong on this host (check with `ip -4 addr show docker0`), or the tunnel isn't running.
+
 **Tip:** Anyone who'd rather click than write config files can use [Nginx Proxy Manager](https://nginxproxymanager.com) as a container.
 
 **Source:** NGINX reverse proxy docs: https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/
@@ -575,6 +583,11 @@ The script is designed for continuous operation: it skips unchanged files (SHA-2
 ```bash
 sudo cp scripts/systemd/rag-indexer.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
+
+# Check the unit before arming it — this reports typos and directives
+# this systemd version doesn't know:
+systemd-analyze verify /etc/systemd/system/rag-indexer.service
+
 sudo systemctl enable --now rag-indexer.timer
 
 # View logs:

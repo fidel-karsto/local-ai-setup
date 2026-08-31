@@ -453,6 +453,14 @@ Die Konfiguration selbst ist auf beiden Systemen identisch — Open WebUI lausch
 
 Jetzt sind beide Ollama-APIs unter ordentlichen Base-URLs im LAN erreichbar — für Menschen und CLI-Clients trägt man dafür in Open WebUI unter *Admin-Einstellungen → Verbindungen* `http://ollama.heim.lan` ein. Für die Workstation gilt das **nicht**: Open WebUI läuft selbst als Container im Compose-Bridge-Netz, ein Request von dort an `ollama-ws.heim.lan` trüge die Bridge-IP statt einer LAN-Adresse (403 an der Allowlist) und selbst mit erlaubter IP schickt Open WebUI für Ollama-Verbindungen Bearer-Token statt der von NGINX erwarteten Basic Auth (401) — der vHost bleibt also den menschlichen und CLI-Clients vorbehalten. Für die Workstation trägt man stattdessen `http://host.docker.internal:11435` ein, wie es der zweite Tunnel-Listener aus §5 auf der Docker-Bridge-Gateway-Adresse bereitstellt (`extra_hosts` in der `docker-compose.yml` macht den Namen im Container auflösbar). Ist die Workstation aus, nutzt man einfach die Modelle des Docker-Hosts.
 
+Ob dieser Weg wirklich steht, prüft man aus dem Container heraus — das ist genau die Perspektive, aus der Open WebUI zugreift:
+
+```bash
+docker exec open-webui curl -sS http://host.docker.internal:11435/api/tags
+```
+
+Kommt hier die Modellliste der Workstation, passt alles. Ein Verbindungsfehler heißt in aller Regel: die Bridge-Gateway-Adresse aus §5 stimmt auf diesem Host nicht (mit `ip -4 addr show docker0` prüfen) oder der Tunnel läuft nicht.
+
 **Tipp:** Wer lieber klickt statt Configs schreibt, nimmt den [Nginx Proxy Manager](https://nginxproxymanager.com) als Container.
 
 **Quelle:** NGINX Reverse-Proxy-Doku: https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/
@@ -575,6 +583,11 @@ Das Skript ist auf Dauerbetrieb ausgelegt: Es überspringt unveränderte Dateien
 ```bash
 sudo cp scripts/systemd/rag-indexer.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
+
+# Unit gegenprüfen, bevor sie scharf geschaltet wird — meldet Tippfehler
+# und Direktiven, die diese systemd-Version nicht kennt:
+systemd-analyze verify /etc/systemd/system/rag-indexer.service
+
 sudo systemctl enable --now rag-indexer.timer
 
 # Logs ansehen:
