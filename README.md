@@ -6,7 +6,7 @@ What triggered me was the very vague post itself and I wondered: How hard would 
 
 ## The Goal
 
-Have a common setup that (almopst) everyone can checkout and install on their home network.
+Have a common setup that (almost) everyone can checkout and install on their home network.
 You can check out the tutorial files. There is an [english](TUTORIAL_EN.md) and a [german](TUTORIAL_DE.md) version.
 
 ## Limitations
