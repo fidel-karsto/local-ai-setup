@@ -22,8 +22,13 @@ services:
       - TZ=${TZ:-Europe/Berlin}
       # Natives Ollama auf dem Mac (host.docker.internal = der Mac selbst):
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      # Nach dem Anlegen des Admin-Accounts in der .env auf "false" setzen:
+      # Muss beim ersten Start "true" sein, sonst lässt sich der Admin-Account
+      # gar nicht anlegen. Danach in den ADMIN-EINSTELLUNGEN abschalten — ein
+      # späteres ENABLE_SIGNUP=false in der .env bleibt wirkungslos (siehe
+      # Kommentar in docker-compose.yml).
       - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
+      # Neue Konten landen auf "ausstehend" und müssen freigegeben werden:
+      - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-pending}
     volumes:
       - open-webui-data:/app/backend/data
     ports:

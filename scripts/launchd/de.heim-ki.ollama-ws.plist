@@ -1,18 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<!-- Ollama auf einer Mac-Workstation, aus dem LAN erreichbar (README §5).
+<!-- Ollama auf einer Mac-Workstation (README §5).
+
+     Ollama lauscht hier NUR auf 127.0.0.1. Erreichbar wird es für den
+     Docker-Host über den SSH-Reverse-Tunnel aus
+     de.heim-ki.ollama-tunnel.plist, der es dort auf 127.0.0.1:11435 legt.
+
+     Warum nicht OLLAMA_HOST=0.0.0.0? Ollama hat keinerlei Authentifizierung.
+     An 0.0.0.0 gebunden lauscht das Notebook in JEDEM Netz, dem es beitritt —
+     auch im Café- oder Hotel-WLAN, wo jeder Nachbar Modelle löschen, eigene
+     nachladen oder auf fremde Kosten rechnen lassen kann.
 
      Warum ein eigener LaunchAgent statt "brew services start ollama" plus
      "launchctl setenv OLLAMA_HOST …"? brew services generiert seine plist bei
      jedem Restart/Upgrade neu, und per launchctl gesetzte Variablen sind nach
-     einem Neustart weg — Ollama lauscht dann wieder still nur auf 127.0.0.1.
-     Hier ist OLLAMA_HOST fest in der Job-Definition verdrahtet: startet beim
-     Login, überlebt Neustarts, kein setenv nötig.
+     einem Neustart weg. Hier ist OLLAMA_HOST fest verdrahtet.
 
      Installation (ohne sudo; NICHT zusätzlich "brew services start ollama"
      ausführen — zwei Instanzen streiten sich sonst um Port 11434):
-       mkdir -p ~/Library/LaunchAgents
+       mkdir -p ~/Library/LaunchAgents /opt/heim-ki/logs
        cp scripts/launchd/de.heim-ki.ollama-ws.plist ~/Library/LaunchAgents/
        launchctl load -w ~/Library/LaunchAgents/de.heim-ki.ollama-ws.plist -->
 <dict>
@@ -32,7 +39,7 @@
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>OLLAMA_HOST</key>
-        <string>0.0.0.0:11434</string>
+        <string>127.0.0.1:11434</string>
     </dict>
 
     <key>RunAtLoad</key>
@@ -40,9 +47,11 @@
     <key>KeepAlive</key>
     <true/>
 
+    <!-- Nicht nach /tmp: das ist world-writable, ein anderer lokaler Account
+         könnte den Pfad als Symlink vorbelegen. Wie die Schwester-Agents. -->
     <key>StandardOutPath</key>
-    <string>/tmp/ollama-ws.log</string>
+    <string>/opt/heim-ki/logs/ollama-ws.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/ollama-ws.log</string>
+    <string>/opt/heim-ki/logs/ollama-ws.log</string>
 </dict>
 </plist>

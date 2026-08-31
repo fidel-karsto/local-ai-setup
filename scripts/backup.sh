@@ -4,19 +4,30 @@
 # Sichert:
 #   - Docker-Volume open-webui-data   (Nutzer, Chats, Wissenssammlungen)
 #   - Docker-Volume chroma-data       (RAG-Index, Variante B)
-#   - Manifest des Indexers           (STATE_FILE, Default /srv/rag-index-state.json)
+#   - Manifest des Indexers           (STATE_FILE, Default /srv/heim-ki/rag-index-state.json)
 # Bewusst NICHT gesichert: ollama-data — Modelle sind jederzeit per
 # "ollama pull" wiederherstellbar und würden das Backup nur aufblähen.
 #
 # Konfiguration über Umgebungsvariablen (Default in Klammern):
 #   BACKUP_DIR (/srv/backups/heim-ki)         Zielverzeichnis (gern ein NAS-Mount)
 #   KEEP_DAYS  (14)                           Sicherungen älter als N Tage löschen
-#   STATE_FILE (/srv/rag-index-state.json)    Indexer-Manifest
+#   STATE_FILE (/srv/heim-ki/rag-index-state.json)  Indexer-Manifest
+#   ALPINE_IMAGE                              Tar-Helfer, auf Digest gepinnt
 set -euo pipefail
 
 BACKUP_DIR="${BACKUP_DIR:-/srv/backups/heim-ki}"
 KEEP_DAYS="${KEEP_DAYS:-14}"
-STATE_FILE="${STATE_FILE:-/srv/rag-index-state.json}"
+STATE_FILE="${STATE_FILE:-/srv/heim-ki/rag-index-state.json}"
+
+# Auf einen Digest gepinnt wie die Images in .env.example: dieser Container
+# läuft als root und sieht beide Daten-Volumes. Es ist bewusst die
+# Manifest-Liste (nicht ein einzelnes Plattform-Manifest), damit der Pin auf
+# amd64 und arm64 gleichermaßen zieht.
+# Stand: alpine 3.22.5, 2026-08-30. Auffrischen mit:
+#   docker pull alpine:3.22
+#   docker inspect --format='{{index .RepoDigests 0}}' alpine:3.22
+ALPINE_IMAGE="${ALPINE_IMAGE:-alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce}"
+
 STAMP="$(date +%F)"
 
 # Ohne erreichbaren Docker-Daemon würden unten beide Volumes als "existiert
@@ -36,7 +47,7 @@ backup_volume() {
         docker run --rm \
             -v "$vol":/data:ro \
             -v "$BACKUP_DIR":/backup \
-            alpine tar czf "/backup/${vol}-${STAMP}.tar.gz" -C /data .
+            "$ALPINE_IMAGE" tar czf "/backup/${vol}-${STAMP}.tar.gz" -C /data .
         echo "Gesichert: ${vol} -> ${vol}-${STAMP}.tar.gz"
     else
         echo "Übersprungen (Volume existiert nicht): ${vol}"

@@ -6,10 +6,58 @@ After=network-online.target docker.service
 
 [Service]
 Type=oneshot
+# Läuft bewusst NICHT als root: der Indexer braucht nur Lesezugriff auf
+# /srv/dokumente und HTTP zu Ollama und Chroma. Den Account anlegen mit:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin heim-ki
+User=heim-ki
+Group=heim-ki
 ExecStart=/srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py
 Nice=10
+
+# --- Sandbox ---------------------------------------------------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# Verbirgt /dev (inkl. /dev/nvidia*) vor dem Dienst — daher keine GPU für
+# Docling: torch.cuda.is_available() liefert False, Layout/OCR laufen auf der
+# CPU (spürbar längerer Nachtlauf, aber kein Fehler). Wird die GPU gebraucht,
+# diese Zeile entfernen — das gibt dem Dienst vollen /dev-Zugriff zurück und
+# ist bewusst gegen die zusätzliche Angriffsfläche abzuwägen.
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+# AF_UNIX wird für die Namensauflösung über nscd/systemd-resolved gebraucht —
+# ohne sie schlägt je nach Host-Konfiguration schon der DNS-Lookup fehl:
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Muss existieren und heim-ki gehören, sonst startet die Unit nicht:
+#   sudo install -d -o heim-ki -g heim-ki -m 0750 /srv/heim-ki
+ReadWritePaths=/srv/heim-ki
+
+# docling.document_converter.DocumentConverter() lädt bei der Default-
+# Pipeline die Layout- und Tabellenmodelle beim ersten Lauf über den
+# HuggingFace Hub nach — per Default landen die unter $HOME/.cache/huggingface.
+# Für heim-ki (--no-create-home) existiert kein $HOME, und ProtectHome=yes
+# blendet /home für den Dienst ohnehin komplett aus. HOME deshalb aktiv auf
+# ein Verzeichnis unterhalb des freigegebenen ReadWritePaths umlenken — das
+# fängt nicht nur HuggingFace ab, sondern jede Bibliothek, die nach
+# $HOME/.cache, $HOME/.EasyOCR, $HOME/.rapidocr o. ä. schreiben will:
+Environment=HOME=/srv/heim-ki/.home
+Environment=HF_HOME=/srv/heim-ki/.cache/huggingface
+Environment=XDG_CACHE_HOME=/srv/heim-ki/.cache
+# Welcher OCR-Motor in der jeweils installierten docling-Version aktiv ist
+# und wohin er cached, ist NICHT fix: requirements.txt pinnt nur docling>=2.0
+# ohne Obergrenze. In aktuellen docling-Versionen ist RapidOCR der Default
+# statt easyocr und schreibt seine Modelle nach ~/.rapidocr/models/; ältere
+# Versionen mit easyocr nutzen ~/.EasyOCR/. Die HOME-Umlenkung oben deckt
+# beide Fälle ab, solange der Motor tatsächlich unter $HOME cached. Schreibt
+# eine künftige Version stattdessen paketrelativ ins venv (z. B. nach
+# site-packages), scheitert das unter ProtectSystem=strict trotzdem — das
+# muss auf dem Zielhost mit der dort installierten docling-Version geprüft
+# werden.
+
 # Konfiguration bei Bedarf (Defaults siehe Skript-Kopf):
 # Environment=DOCS_DIR=/srv/dokumente
-# Environment=STATE_FILE=/srv/rag-index-state.json
+# Environment=STATE_FILE=/srv/heim-ki/rag-index-state.json
 # Environment=CHROMA_URL=http://127.0.0.1:8000
 # Environment=OLLAMA_URL=http://127.0.0.1:11434
