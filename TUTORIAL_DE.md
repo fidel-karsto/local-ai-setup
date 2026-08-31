@@ -633,6 +633,46 @@ tail -f /opt/heim-ki/logs/rag-indexer.log
 - Braucht man mehr Leistung, startet man die Workstation — Open WebUI erreicht deren Ollama sofort über die in §5/§6 eingerichtete Verbindung `http://host.docker.internal:11435`; Menschen und CLI-Clients im LAN nutzen weiterhin `http://ollama-ws.heim.lan`.
 - **Keine Daten fließen „nach Amiland"** — alles bleibt im eigenen LAN.
 
+### Abnahme: hat die Härtung wirklich gegriffen?
+
+Die Absicherungen aus §5–§7 haben eine unangenehme Eigenschaft: Wenn sie *nicht* greifen, merkt man davon im Alltag nichts. Die Oberfläche funktioniert, die Modelle antworten — nur steht die unauthentifizierte Ollama-API weiterhin offen im Netz. Diese acht Prüfungen einmal nach der Einrichtung durchgehen; sie brauchen den echten Host und lassen sich nicht vorab abhaken.
+
+```bash
+# 1. NGINX-Konfiguration syntaktisch in Ordnung?
+sudo nginx -t
+
+# 2. Ohne Zugangsdaten abgewiesen? Erwartet: 401
+curl -si http://ollama.heim.lan/api/tags | head -1
+
+# 3. Mit Zugangsdaten durchgelassen? Erwartet: 200
+curl -si -u heim-ki:PASSWORT http://ollama.heim.lan/api/tags | head -1
+
+# 4. Von einem Gerät AUSSERHALB der <LAN-CIDR> aus. Erwartet: 403
+curl -si -u heim-ki:PASSWORT http://ollama.heim.lan/api/tags | head -1
+
+# 5. Lauscht Ollama wirklich nur auf Loopback? Erwartet: nur 127.0.0.1,
+#    nirgends 0.0.0.0 oder eine LAN-Adresse
+sudo ss -ltnp | grep 11434          # Docker-Host
+lsof -iTCP:11434 -sTCP:LISTEN       # auf der Mac-Workstation
+
+# 6. Steht der Tunnel, und auf welchen Adressen? Erwartet: 127.0.0.1:11435
+#    für NGINX und die docker0-Gateway-Adresse für Open WebUI
+sudo ss -ltn | grep 11435
+ip -4 addr show docker0             # stimmt die Gateway-Adresse mit §5 überein?
+
+# 7. Erreicht Open WebUI die Workstation? Erwartet: Modellliste
+docker exec open-webui curl -sS http://host.docker.internal:11435/api/tags
+
+# 8. Läuft der Indexer unter voller Sandbox durch?
+systemd-analyze verify /etc/systemd/system/rag-indexer.service
+sudo systemctl start rag-indexer.service
+journalctl -u rag-indexer.service -n 50
+```
+
+Zu Prüfung 3 und 4: `401` heißt „Zugangsdaten fehlen", `403` heißt „Quell-IP nicht in der Allowlist". Beide Antworten sind gute Nachrichten — sie belegen, dass `satisfy all` greift. Bekommt man an Stelle 2 dagegen eine Modellliste, ist die `auth_basic`-Konfiguration wirkungslos; kommt `500`, fehlt die htpasswd-Datei oder der Pfad in `auth_basic_user_file` stimmt nicht (`nginx -t` merkt das nicht, weil die Datei erst zur Laufzeit geöffnet wird).
+
+Zu Prüfung 8: Der erste Lauf lädt die Docling-Modelle herunter und dauert entsprechend. Er ist der eigentliche Test der Sandbox — ein direkter Aufruf per `sudo -u heim-ki …` umgeht die Unit und würde Schreibfehler, die erst `ProtectSystem=strict` verursacht, gar nicht zeigen.
+
 ## 9. Updates
 
 Die Image-Versionen sind in der [`.env`](.env.example) **gepinnt** — bewusst kein `:latest`/`:main`, damit das Setup reproduzierbar bleibt und Updates ein bewusster Schritt sind (Open WebUI released sehr häufig, teils mit Verhaltensänderungen). Aktualisieren:
@@ -787,6 +827,8 @@ Eine Minute später ist das Workstation-Ollama unter `ollama-ws.heim.lan` verfü
 ---
 
 ## 13. Troubleshooting
+
+Bei Verdacht, dass eine der Absicherungen aus §5–§7 nicht greift, zuerst die Abnahme-Checkliste in §8 durchgehen — sie grenzt die Ursache meist schneller ein als die Tabelle hier.
 
 | Symptom | Ursache & Abhilfe |
 |---|---|

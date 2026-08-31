@@ -633,6 +633,46 @@ tail -f /opt/heim-ki/logs/rag-indexer.log
 - Need more power? Start the workstation — Open WebUI reaches its Ollama immediately via the connection set up in §5/§6, `http://host.docker.internal:11435`; humans and CLI clients on the LAN keep using `http://ollama-ws.heim.lan`.
 - **No data flows "to America"** — everything stays on your own LAN.
 
+### Acceptance: did the hardening actually take effect?
+
+The protections from §5–§7 have an unpleasant property: if they *don't* take effect, you won't notice in day-to-day use. The interface works, the models answer — the unauthenticated Ollama API is just still sitting open on the network. Walk through these eight checks once after setup; they need the real host and can't be ticked off in advance.
+
+```bash
+# 1. Is the NGINX configuration syntactically sound?
+sudo nginx -t
+
+# 2. Rejected without credentials? Expected: 401
+curl -si http://ollama.heim.lan/api/tags | head -1
+
+# 3. Allowed through with credentials? Expected: 200
+curl -si -u heim-ki:PASSWORD http://ollama.heim.lan/api/tags | head -1
+
+# 4. From a device OUTSIDE the <LAN-CIDR>. Expected: 403
+curl -si -u heim-ki:PASSWORD http://ollama.heim.lan/api/tags | head -1
+
+# 5. Is Ollama really listening on loopback only? Expected: only 127.0.0.1,
+#    nowhere 0.0.0.0 or a LAN address
+sudo ss -ltnp | grep 11434          # Docker host
+lsof -iTCP:11434 -sTCP:LISTEN       # on the Mac workstation
+
+# 6. Is the tunnel up, and on which addresses? Expected: 127.0.0.1:11435
+#    for NGINX and the docker0 gateway address for Open WebUI
+sudo ss -ltn | grep 11435
+ip -4 addr show docker0             # does the gateway address match §5?
+
+# 7. Does Open WebUI reach the workstation? Expected: model list
+docker exec open-webui curl -sS http://host.docker.internal:11435/api/tags
+
+# 8. Does the indexer run through under the full sandbox?
+systemd-analyze verify /etc/systemd/system/rag-indexer.service
+sudo systemctl start rag-indexer.service
+journalctl -u rag-indexer.service -n 50
+```
+
+On checks 3 and 4: `401` means "credentials missing", `403` means "source IP not in the allowlist". Both answers are good news — they prove `satisfy all` is working. If check 2 returns a model list instead, the `auth_basic` configuration is ineffective; if it returns `500`, the htpasswd file is missing or the path in `auth_basic_user_file` is wrong (`nginx -t` won't catch that, because the file is only opened at runtime).
+
+On check 8: The first run downloads the Docling models and takes correspondingly long. It is the actual test of the sandbox — calling it directly via `sudo -u heim-ki …` bypasses the unit and would not surface write errors that only `ProtectSystem=strict` causes.
+
 ## 9. Updates
 
 The image versions are **pinned** in the [`.env`](.env.example) — deliberately not `:latest`/`:main`, so the setup stays reproducible and updates are a deliberate step (Open WebUI releases very frequently, sometimes with behavior changes). To update:
@@ -787,6 +827,8 @@ A minute later, the workstation's Ollama is available at `ollama-ws.heim.lan` (t
 ---
 
 ## 13. Troubleshooting
+
+If you suspect one of the protections from §5–§7 isn't taking effect, work through the acceptance checklist in §8 first — it usually narrows down the cause faster than the table below.
 
 | Symptom | Cause & fix |
 |---|---|
