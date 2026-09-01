@@ -3,6 +3,12 @@
 Konvertierung und HTTP sind hier durch Fakes ersetzt: geprüft wird die
 Buchführung — was wird übersprungen, was neu hochgeladen, was entfernt.
 
+Der Großteil dieser Datei braucht nur die Standardbibliothek. Einzig die
+Tests der main()-Verdrahtung (TestMain) importieren zusätzlich requests und
+webui_client (das seinerseits docconvert und damit docling lädt) — fehlt
+eines der beiden Pakete, werden nur diese Tests übersprungen statt die
+ganze Datei am Laden zu hindern.
+
 Ausführen:
     python3 -m unittest tests.test_doc_sync -v
 """
@@ -16,12 +22,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import requests
-
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-
-import webui_client  # gleiche Modulinstanz, die doc_sync.main() per "import webui_client" holt
 
 _spec = importlib.util.spec_from_file_location("doc_sync", SCRIPTS / "doc-sync.py")
 doc_sync = importlib.util.module_from_spec(_spec)
@@ -252,15 +254,31 @@ class TestLaufSperre(unittest.TestCase):
                 pass  # darf nicht werfen
 
 
+@unittest.skipUnless(
+    importlib.util.find_spec("requests") is not None
+    and importlib.util.find_spec("docling") is not None,
+    "main() importiert intern requests und (über webui_client/docconvert) docling "
+    "— ohne beide Pakete ist die main()-Verdrahtung nicht prüfbar",
+)
 class TestMain(unittest.TestCase):
     """Prüft main() gegen echte Modulglobale — mit Fake-Client statt Netz.
 
     docconvert und webui_client werden hier ganz normal importiert (main()
     tut das intern auch), nur die WebUIClient-Klasse wird durch einen Fake
     ersetzt, damit kein echtes Netz nötig ist.
+
+    requests und webui_client werden erst hier (statt auf Modulebene)
+    importiert, damit die stdlib-Tests dieser Datei auch ohne diese Pakete
+    laufen.
     """
 
     def setUp(self):
+        import requests
+        import webui_client
+
+        self.requests = requests
+        self.webui_client = webui_client
+
         self._tmp = tempfile.TemporaryDirectory()
         wurzel = Path(self._tmp.name)
         self.docs = wurzel / "dokumente"
@@ -287,7 +305,7 @@ class TestMain(unittest.TestCase):
 
     def _lauf_mit_client(self, fake_client_klasse):
         puffer = io.StringIO()
-        with mock.patch.object(webui_client, "WebUIClient", fake_client_klasse):
+        with mock.patch.object(self.webui_client, "WebUIClient", fake_client_klasse):
             with contextlib.redirect_stdout(puffer):
                 rc = doc_sync.main()
         return rc, puffer.getvalue()
@@ -296,6 +314,8 @@ class TestMain(unittest.TestCase):
         # requests.exceptions.ConnectionError ist KEINE webui_client.WebUIError
         # (die entsteht nur bei einem HTTP-Fehlerstatus) — genau der Fall,
         # wenn Open WebUI nachts gar nicht erreichbar ist.
+        requests = self.requests
+
         class FakeVerbindungWeg:
             def __init__(self, base_url, api_key, timeout=60):
                 pass
