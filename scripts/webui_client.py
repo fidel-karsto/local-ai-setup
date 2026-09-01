@@ -11,6 +11,13 @@ import requests
 # Der Client verlässt sich nicht auf diesen Wert, sondern blättert, bis
 # "total" beisammen ist — dann bleibt er auch bei einer Änderung heil.
 
+# Obergrenze fürs Blättern: Die Schleife terminiert für jedes endliche
+# "total" (gesammelt wächst pro Durchlauf), aber ein fehlerhaft großes
+# "total" vom Server würde in diesem unbeaufsichtigten Nacht-Job unbemerkt
+# tausende HTTP-Anfragen auslösen. 200 Seiten à 30 Einträge = 6000 Dokumente,
+# weit jenseits dessen, wofür dieses Setup gedacht ist.
+MAX_SEITEN = 200
+
 
 class WebUIError(RuntimeError):
     """Open WebUI hat mit einem Fehlerstatus geantwortet."""
@@ -48,8 +55,14 @@ class WebUIClient:
             daten = self._get(pfad, {"page": seite})
             eintraege = daten.get("items", [])
             gesammelt.extend(eintraege)
-            if not eintraege or len(gesammelt) >= daten.get("total", 0):
+            total = daten.get("total", 0)
+            if not eintraege or len(gesammelt) >= total:
                 return gesammelt
+            if seite >= MAX_SEITEN:
+                raise WebUIError(
+                    f"{pfad}: Abbruch nach {len(gesammelt)} geholten Einträgen "
+                    f"(MAX_SEITEN={MAX_SEITEN} erreicht), aber Server meldet total={total}"
+                )
             seite += 1
 
     # --- außen -------------------------------------------------------------

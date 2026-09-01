@@ -141,6 +141,31 @@ class TestWebUIClient(unittest.TestCase):
             self.client.upload_markdown("heft.md", "# Inhalt")
         self.assertIn("401", str(ctx.exception))
 
+    def test_sammlung_erstellen(self):
+        ANTWORTEN[("POST", "/api/v1/knowledge/create")] = [(200, {"id": "k9"})]
+        knowledge_id = self.client.create_knowledge("Heim-Dokumente", "Testbeschreibung")
+        self.assertEqual(knowledge_id, "k9")
+
+        _, _, _, rumpf = AUFRUFE[0]
+        gesendet = json.loads(rumpf)
+        self.assertEqual(gesendet["name"], "Heim-Dokumente")
+        self.assertEqual(gesendet["description"], "Testbeschreibung")
+
+    def test_paginierung_bricht_bei_absurdem_total_ab(self):
+        # Server meldet immer eine volle Seite und ein total, das niemals
+        # erreicht wird — der Client muss abbrechen statt endlos zu blaettern.
+        ANTWORTEN[("GET", "/api/v1/knowledge/k2/files")] = [
+            (200, {"items": [{"id": f"f{i}"} for i in range(30)], "total": 10_000_000}),
+        ]
+
+        with self.assertRaises(webui_client.WebUIError) as ctx:
+            self.client.knowledge_file_ids("k2")
+
+        meldung = str(ctx.exception)
+        self.assertIn("/api/v1/knowledge/k2/files", meldung)
+        self.assertIn(str(webui_client.MAX_SEITEN * 30), meldung)
+        self.assertIn("10000000", meldung)
+
 
 if __name__ == "__main__":
     unittest.main()
