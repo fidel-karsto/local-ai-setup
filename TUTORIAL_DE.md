@@ -357,6 +357,30 @@ Der NGINX proxyt dann:
 > 1. **Pi-hole oder AdGuard Home** im LAN betreiben (z. B. als weiterer Container auf dem Docker-Host) und dort unter *Local DNS Records* die drei Namen auf die IP des Docker-Hosts eintragen; anschließend Pi-hole/AdGuard als DNS-Server im Router hinterlegen. Sauberste Lösung — und blockt nebenbei Werbung.
 > 2. **`hosts`-Datei auf jedem Client** (Windows: `C:\Windows\System32\drivers\etc\hosts`, Linux/macOS: `/etc/hosts`): drei Zeilen mit `<docker-host-ip> chat.heim.lan ollama.heim.lan ollama-ws.heim.lan`. Funktioniert sofort, skaliert aber schlecht — auf Smartphones praktisch nicht machbar.
 > 3. **Kompromiss ohne Zusatzsoftware:** Den Docker-Host in der Fritz!Box z. B. `chat` nennen — dann erreicht der Haushalt Open WebUI unter `http://chat.fritz.box` (dafür in der NGINX-Konfiguration `server_name chat.fritz.box;` ergänzen bzw. als `default_server` arbeiten). Die beiden Ollama-API-Namen entfallen dabei; wer die APIs direkt braucht, nutzt dann `<docker-host-ip>:Port`.
+> 4. **macOS-Host: ganz ohne DNS (mDNS/Bonjour)** — siehe unten.
+
+> ℹ️ **Bei anderen Routern ist es teils noch enger.** Ein Telekom **Speedport Smart 3** etwa kennt überhaupt keine eigenen DNS-Einträge, weder A-Records noch eine Ausnahmeliste; vergibt man dort eigene Gerätenamen, schaltet er die lokale Namensauflösung sogar ganz ab. Die „festen DNS-Server" unter *Internet → Internetverbindung* sind etwas anderes — das ist nur der Upstream-Resolver. Bleiben Option 1, 2 oder — auf einem Mac — Option 4.
+
+**Der bequeme Weg auf einem macOS-Host: `.local` statt `heim.lan`**
+
+Läuft die Heim-KI auf einem Mac, braucht es für den Chat **gar keine DNS-Einrichtung**. Zwei Dinge greifen ineinander:
+
+- macOS meldet seinen lokalen Hostnamen automatisch per **Bonjour/mDNS** im LAN an. Der Rechner ist damit ohne Router-Eintrag und ohne `hosts`-Datei unter `<lokaler-hostname>.local` erreichbar.
+- NGINX benutzt den **ersten** Server-Block auf einem Listen-Socket als *Default Server*. In [`nginx/heim-ki.conf`](nginx/heim-ki.conf) ist das der Chat-vHost — jeder Name, der auf keinen `server_name` passt, landet also bei Open WebUI.
+
+Zusammen heißt das: `http://<name>.local` führt sofort in den Chat. Einen kürzeren Namen setzt man mit
+
+```bash
+sudo scutil --set LocalHostName heim-ki     # danach: http://heim-ki.local
+```
+
+(dasselbe geht über *Systemeinstellungen → Allgemein → Teilen → Lokaler Hostname*). Prüfen lässt sich das vom Client aus mit `ping heim-ki.local`, ausführlicher mit `dns-sd -G v4 heim-ki.local` (macOS) oder `avahi-resolve -n heim-ki.local` (Linux).
+
+Drei Einschränkungen, die man kennen sollte:
+
+- **Nur der Chat.** Die beiden Ollama-vHosts prüfen ihren `server_name` wirklich — für `ollama.heim.lan` braucht es weiterhin echtes DNS oder einen `hosts`-Eintrag. Für den Alltag im Browser ist das kein Verlust.
+- **Android ist der Wackelkandidat.** macOS, iOS, Windows 10+ und Linux mit Avahi lösen `.local` von Haus aus auf; Android-Browser tun das nur unzuverlässig — dort bleibt die IP-Adresse.
+- **Mit HTTPS (§10) passt das Zertifikat nicht**, wenn der Name nicht drinsteht. Deshalb den `.local`-Namen gleich in den mkcert-Aufruf aufnehmen: `mkcert chat.heim.lan ollama.heim.lan ollama-ws.heim.lan heim-ki.local`.
 
 **Schritt 2 — NGINX-Konfiguration:** Die fertige Konfiguration liegt in diesem Repo unter [`nginx/heim-ki.conf`](nginx/heim-ki.conf) — vor dem Kopieren `<LAN-CIDR>` durch das eigene Heimnetz ersetzen (z. B. `192.168.1.0/24`). Die wichtigsten Blöcke (gekürzt):
 
@@ -760,6 +784,12 @@ mkcert -install        # legt die lokale CA an und trägt sie auf DIESEM Rechner
 
 # Ein Zertifikat für alle drei Namen:
 mkcert chat.heim.lan ollama.heim.lan ollama-ws.heim.lan
+
+# Auf einem macOS-Host, der zusätzlich per Bonjour erreichbar sein soll
+# (§6, Option 4), den .local-Namen mit aufnehmen — sonst meckert der Browser
+# beim Aufruf über .local über das Zertifikat:
+#   mkcert chat.heim.lan ollama.heim.lan ollama-ws.heim.lan heim-ki.local
+# Achtung: Die Dateinamen unten heißen dann "chat.heim.lan+3.pem" statt "+2".
 
 # Linux:
 sudo mkdir -p /etc/nginx/certs

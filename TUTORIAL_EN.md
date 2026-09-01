@@ -357,6 +357,30 @@ NGINX then proxies:
 > 1. **Run Pi-hole or AdGuard Home** on the LAN (e.g. as another container on the Docker host) and enter the three names under *Local DNS Records* pointing to the Docker host's IP; then set Pi-hole/AdGuard as the DNS server in the router. The cleanest solution — and blocks ads on the side.
 > 2. **A `hosts` file on every client** (Windows: `C:\Windows\System32\drivers\etc\hosts`, Linux/macOS: `/etc/hosts`): three lines with `<docker-host-ip> chat.heim.lan ollama.heim.lan ollama-ws.heim.lan`. Works immediately, but scales poorly — practically impossible on smartphones.
 > 3. **Compromise without extra software:** Name the Docker host e.g. `chat` in the Fritz!Box — then the household reaches Open WebUI at `http://chat.fritz.box` (for this, add `server_name chat.fritz.box;` in the NGINX configuration, or work as `default_server`). The two Ollama API names are then unavailable; anyone who needs the APIs directly uses `<docker-host-ip>:port`.
+> 4. **macOS host: no DNS at all (mDNS/Bonjour)** — see below.
+
+> ℹ️ **Some routers are even more restrictive.** A Telekom **Speedport Smart 3**, for instance, knows no custom DNS entries whatsoever — neither A records nor an exception list; assign your own device names there and it switches local name resolution off entirely. The "fixed DNS servers" under *Internet → Internet connection* are a different thing, that is only the upstream resolver. What remains is option 1, 2 or — on a Mac — option 4.
+
+**The comfortable route on a macOS host: `.local` instead of `heim.lan`**
+
+If the home AI runs on a Mac, the chat needs **no DNS setup at all**. Two things play together:
+
+- macOS announces its local hostname on the LAN automatically via **Bonjour/mDNS**. The machine is therefore reachable at `<local-hostname>.local` without a router entry and without a `hosts` file.
+- NGINX uses the **first** server block on a listen socket as the *default server*. In [`nginx/heim-ki.conf`](nginx/heim-ki.conf) that is the chat vHost — so every name that matches no `server_name` ends up at Open WebUI.
+
+Together that means `http://<name>.local` leads straight into the chat. A shorter name is set with
+
+```bash
+sudo scutil --set LocalHostName heim-ki     # afterwards: http://heim-ki.local
+```
+
+(the same is available under *System Settings → General → Sharing → Local hostname*). From a client you can check it with `ping heim-ki.local`, or in more detail with `dns-sd -G v4 heim-ki.local` (macOS) or `avahi-resolve -n heim-ki.local` (Linux).
+
+Three limitations worth knowing:
+
+- **Chat only.** The two Ollama vHosts really do check their `server_name` — `ollama.heim.lan` still needs real DNS or a `hosts` entry. For everyday browser use that is no loss.
+- **Android is the weak spot.** macOS, iOS, Windows 10+ and Linux with Avahi resolve `.local` out of the box; Android browsers only do so unreliably — there the IP address remains.
+- **With HTTPS (§10) the certificate will not match** unless the name is in it. So include the `.local` name in the mkcert call right away: `mkcert chat.heim.lan ollama.heim.lan ollama-ws.heim.lan heim-ki.local`.
 
 **Step 2 — NGINX configuration:** The finished configuration is in this repo at [`nginx/heim-ki.conf`](nginx/heim-ki.conf) — before copying, replace `<LAN-CIDR>` with your own home network (e.g. `192.168.1.0/24`). The key blocks (abridged):
 
@@ -760,6 +784,12 @@ mkcert -install        # creates the local CA and registers it on THIS machine
 
 # One certificate for all three names:
 mkcert chat.heim.lan ollama.heim.lan ollama-ws.heim.lan
+
+# On a macOS host that should also be reachable via Bonjour (§6, option 4),
+# include the .local name — otherwise the browser complains about the
+# certificate when you go through .local:
+#   mkcert chat.heim.lan ollama.heim.lan ollama-ws.heim.lan heim-ki.local
+# Note: the file names below are then "chat.heim.lan+3.pem" instead of "+2".
 
 # Linux:
 sudo mkdir -p /etc/nginx/certs
