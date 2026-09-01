@@ -444,8 +444,27 @@ sudo nginx -t && sudo systemctl reload nginx
 
 # macOS (Homebrew):
 sudo cp nginx/heim-ki.conf /opt/homebrew/etc/nginx/servers/
-sudo brew services restart nginx
+
+# Adjust the placeholder and the Linux paths in the COPIED file (fill in your
+# own home network; under Homebrew the htpasswd file lives elsewhere than on
+# Debian):
+sudo sed -i '' \
+  -e 's|<LAN-CIDR>|192.168.1.0/24|g' \
+  -e 's|/etc/nginx/heim-ki.htpasswd|/opt/homebrew/etc/nginx/heim-ki.htpasswd|g' \
+  /opt/homebrew/etc/nginx/servers/heim-ki.conf
+
+sudo nginx -t && sudo brew services restart nginx
 ```
+
+> **If the placeholder stays in place**, the configuration test aborts right away — `allow <LAN-CIDR>;` is not a valid directive:
+>
+> ```
+> nginx: [emerg] invalid parameter "<LAN-CIDR>" in .../heim-ki.conf:<line of the allow directive>
+> ```
+>
+> NGINX then refuses to load the **whole** file, the chat vHost included. That is why `nginx -t` comes before the start here, just as in the Linux line, and not after it.
+
+> **Two warnings during `sudo brew services start`** are normal, not errors: "Taking root:admin ownership of some nginx paths" only means a later `brew upgrade nginx` will need `sudo` as well. And "`nginx` must be run as non-root to start at user login!" is actually what you want here — as a root **LaunchDaemon**, NGINX starts at *boot* rather than at login, which makes it the only piece that survives a restart without anyone logging in (Ollama and Docker Desktop still depend on a session, see §3). Root is mandatory anyway, ports 80/443 are privileged.
 
 The configuration itself is identical on both systems — Open WebUI listens on `127.0.0.1:3000` and Ollama on `127.0.0.1:11434`, regardless of whether Ollama runs in a container (Linux) or natively (macOS).
 
@@ -868,6 +887,7 @@ If you suspect one of the protections from §5–§7 isn't taking effect, work t
 | Containers don't see the GPU | Test: `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`. If that fails: `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`. After a driver update: restart the host. |
 | Responses suddenly very slow | `docker exec ollama ollama ps` shows whether the model is (partially) running on the CPU (`XX%/YY% CPU/GPU`). Fix: a smaller/more heavily quantized model, or the §4 tips (`OLLAMA_MAX_LOADED_MODELS=1`). |
 | First prompt "hangs" | The model is currently being loaded into VRAM — this takes a while for larger models. `OLLAMA_KEEP_ALIVE` (§4) prevents frequent reloading. |
+| `nginx: [emerg] invalid parameter "<LAN-CIDR>"` | The copied configuration still contains the placeholder (§6). Replace it with your own network, e.g. `192.168.2.0/24` — while the test fails, NGINX loads none of the file, so `chat.heim.lan` stays dead too. |
 | `403 Forbidden` from `ollama.heim.lan` | Since the security hardening, usually the IP allowlist (`allow <LAN-CIDR>; deny all;` in §6) — access from outside the allowed network is rejected with 403; check which IP the client is coming from. Only after ruling that out does Ollama's own Host header protection come into play — the §6 configuration therefore sends `Host 127.0.0.1:11434`; check whether the repo's configuration is really active (`nginx -T \| grep -A5 ollama`). |
 | `401 Unauthorized` from `ollama.heim.lan` | Missing or wrong basic-auth credentials — since the hardening, the Ollama vHosts require `auth_basic` (§6) in addition to the IP allowlist; check or reset the credentials in the password file (`sudo htpasswd /etc/nginx/heim-ki.htpasswd heim-ki`). |
 | Upload fails with `413 Request Entity Too Large` | `client_max_body_size` missing/too small — included in `nginx/heim-ki.conf` (100 MB), reload NGINX. |
