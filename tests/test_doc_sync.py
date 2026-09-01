@@ -6,15 +6,22 @@ Buchführung — was wird übersprungen, was neu hochgeladen, was entfernt.
 Ausführen:
     python3 -m unittest tests.test_doc_sync -v
 """
+import contextlib
 import importlib.util
+import io
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import requests
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+
+import webui_client  # gleiche Modulinstanz, die doc_sync.main() per "import webui_client" holt
 
 _spec = importlib.util.spec_from_file_location("doc_sync", SCRIPTS / "doc-sync.py")
 doc_sync = importlib.util.module_from_spec(_spec)
@@ -78,6 +85,11 @@ class SyncTestBasis(unittest.TestCase):
         )
 
     def manifest(self):
+        # load_state() behandelt "Datei fehlt" und "Datei enthält {}" gleich —
+        # der Testhelfer tut das hier bewusst auch, statt sync() zum Anlegen
+        # eines leeren Anfangsmanifests zu zwingen (siehe Befund 3).
+        if not self.state.exists():
+            return {}
         return json.loads(self.state.read_text(encoding="utf-8"))
 
 
@@ -167,16 +179,24 @@ class TestSync(SyncTestBasis):
         self.assertEqual(client.in_sammlung, {"f1"})
 
     def test_kaputte_datei_bricht_den_lauf_nicht_ab(self):
+        # Namen bewusst so gewählt, dass die kaputte Datei alphabetisch VOR
+        # der guten liegt (docscan.scan() sortiert). Bestünde die Schleife
+        # nach einem Fehler nicht mehr fort (z.B. durch ein fälschlich
+        # eingebautes "break" statt "continue"), würde "b_gut.pdf" nie
+        # verarbeitet und fehlte im Manifest — nur so beweist die Anwesenheit
+        # der guten Datei im Manifest, dass der Lauf über den Fehler
+        # hinweg weiterlief.
+        #
         # Unterschiedlicher Inhalt, damit die beiden Dateien nicht denselben
         # sha256-Digest (und damit denselben Cache-Eintrag) teilen — sonst
-        # würde der Cache-Treffer von "gut.pdf" die absichtlich scheiternde
-        # Konvertierung von "kaputt.pdf" verdecken.
-        (self.docs / "kaputt.pdf").write_bytes(b"%PDF- kaputt")
-        (self.docs / "gut.pdf").write_bytes(b"%PDF- gut")
+        # würde der Cache-Treffer von "b_gut.pdf" die absichtlich
+        # scheiternde Konvertierung von "a_kaputt.pdf" verdecken.
+        (self.docs / "a_kaputt.pdf").write_bytes(b"%PDF- kaputt")
+        (self.docs / "b_gut.pdf").write_bytes(b"%PDF- gut")
         client = FakeClient()
 
         def konvertiere(pfad):
-            if pfad.name == "kaputt.pdf":
+            if pfad.name == "a_kaputt.pdf":
                 raise ValueError("unlesbar")
             return f"# {pfad.stem}"
 
@@ -191,8 +211,8 @@ class TestSync(SyncTestBasis):
 
         self.assertEqual(fehler, 1)
         self.assertEqual(client.in_sammlung, {"f1"})
-        self.assertIn("gut.pdf", self.manifest())
-        self.assertNotIn("kaputt.pdf", self.manifest())
+        self.assertIn("b_gut.pdf", self.manifest())
+        self.assertNotIn("a_kaputt.pdf", self.manifest())
 
     def test_zielname_macht_unterordner_eindeutig(self):
         self.assertEqual(doc_sync.zielname("steuer/2025.pdf"), "steuer_2025.md")
@@ -230,6 +250,80 @@ class TestLaufSperre(unittest.TestCase):
                 pass
             with doc_sync.lauf_sperre(sperre):
                 pass  # darf nicht werfen
+
+
+class TestMain(unittest.TestCase):
+    """Prüft main() gegen echte Modulglobale — mit Fake-Client statt Netz.
+
+    docconvert und webui_client werden hier ganz normal importiert (main()
+    tut das intern auch), nur die WebUIClient-Klasse wird durch einen Fake
+    ersetzt, damit kein echtes Netz nötig ist.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        wurzel = Path(self._tmp.name)
+        self.docs = wurzel / "dokumente"
+        self.docs.mkdir()
+        self.api_key_datei = wurzel / "webui-api-key"
+        self.api_key_datei.write_text("geheim\n", encoding="utf-8")
+
+        patches = [
+            mock.patch.object(doc_sync, "DOCS_DIR", self.docs),
+            mock.patch.object(doc_sync, "STATE_FILE", wurzel / "state.json"),
+            mock.patch.object(doc_sync, "CACHE_DIR", wurzel / "cache"),
+            mock.patch.object(doc_sync, "LOCK_FILE", wurzel / "doc-sync.lock"),
+            mock.patch.object(doc_sync, "WEBUI_API_KEY_FILE", self.api_key_datei),
+            mock.patch.object(doc_sync, "WEBUI_URL", "http://webui.invalid:3000"),
+            mock.patch.object(doc_sync, "KNOWLEDGE_NAME", "Testsammlung"),
+            mock.patch.object(sys, "argv", ["doc-sync.py"]),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _lauf_mit_client(self, fake_client_klasse):
+        puffer = io.StringIO()
+        with mock.patch.object(webui_client, "WebUIClient", fake_client_klasse):
+            with contextlib.redirect_stdout(puffer):
+                rc = doc_sync.main()
+        return rc, puffer.getvalue()
+
+    def test_webui_nicht_erreichbar_bricht_sauber_ab(self):
+        # requests.exceptions.ConnectionError ist KEINE webui_client.WebUIError
+        # (die entsteht nur bei einem HTTP-Fehlerstatus) — genau der Fall,
+        # wenn Open WebUI nachts gar nicht erreichbar ist.
+        class FakeVerbindungWeg:
+            def __init__(self, base_url, api_key, timeout=60):
+                pass
+
+            def knowledge_id_by_name(self, name):
+                raise requests.exceptions.ConnectionError("Verbindung abgelehnt")
+
+        rc, ausgabe = self._lauf_mit_client(FakeVerbindungWeg)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("http://webui.invalid:3000", ausgabe)
+        self.assertIn("ConnectionError", ausgabe)
+
+    def test_cache_in_docs_dir_bricht_sauber_ab(self):
+        (self.docs / "heft.pdf").write_bytes(b"%PDF-")
+
+        class FakeOk:
+            def __init__(self, base_url, api_key, timeout=60):
+                pass
+
+            def knowledge_id_by_name(self, name):
+                return "k1"
+
+        with mock.patch.object(doc_sync, "CACHE_DIR", self.docs / "cache"):
+            rc, ausgabe = self._lauf_mit_client(FakeOk)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("CACHE_DIR", ausgabe)
 
 
 if __name__ == "__main__":

@@ -130,11 +130,6 @@ def sync(*, docs_dir: Path, state_file: Path, cache_dir: Path, client,
         )
 
     state = load_state(state_file)
-    if not state_file.exists():
-        # Manifest von Anfang an anlegen, auch wenn der erste Lauf komplett
-        # scheitert (z.B. Upload abgelehnt) und die Schleifen unten daher
-        # nie speichern — sonst ist state_file danach nicht lesbar.
-        save_state(state_file, state)
     current = docscan.scan(docs_dir)
     in_sammlung = client.knowledge_file_ids(knowledge_id)
 
@@ -168,7 +163,7 @@ def sync(*, docs_dir: Path, state_file: Path, cache_dir: Path, client,
             log(f"Übernommen: {rel} ({len(markdown)} Zeichen)")
         except Exception as exc:
             fehler += 1
-            log(f"FEHLER bei {rel}: {exc}")
+            log(f"FEHLER bei {rel}: {type(exc).__name__}: {exc}")
 
     log(f"Fertig. {len(current)} Dateien im Bestand, {fehler} Fehler.")
     return fehler
@@ -190,9 +185,12 @@ def main() -> int:
         log(f"FEHLER: API-Key-Datei {WEBUI_API_KEY_FILE} fehlt.")
         return 1
 
-    # Erst hier importieren: beide Module ziehen schwere Abhängigkeiten, und
-    # die Fehlermeldungen oben sollen auch ohne venv lesbar sein.
+    # Erst hier importieren: alle drei Module ziehen schwere Abhängigkeiten
+    # (bzw. requests), und die Fehlermeldungen oben sollen auch ohne venv
+    # lesbar bleiben — das ist wichtig, weil die Tests das Modul ohne
+    # installiertes Docling laden.
     import docconvert
+    import requests
     import webui_client
 
     api_key = WEBUI_API_KEY_FILE.read_text(encoding="utf-8").strip()
@@ -226,6 +224,20 @@ def main() -> int:
         return 1
     except webui_client.WebUIError as exc:
         log(f"FEHLER: Open WebUI nicht erreichbar oder lehnt ab — {exc}")
+        return 1
+    except requests.exceptions.RequestException as exc:
+        # Anders als WebUIError (HTTP-Fehlerstatus) steht hier gar keine
+        # Antwort: WEBUI_URL nicht erreichbar, DNS-Fehler, Timeout usw. —
+        # im Nachtlauf der wahrscheinlichste Fehlerfall überhaupt.
+        log(
+            f"FEHLER: Open WebUI unter {WEBUI_URL} nicht erreichbar "
+            f"({type(exc).__name__}: {exc})"
+        )
+        return 1
+    except ValueError as exc:
+        # Reiner Konfigurationsfehler (z.B. CACHE_DIR liegt in DOCS_DIR) —
+        # kein Traceback für den Betreiber, sondern die klare Meldung aus sync().
+        log(f"FEHLER: {exc}")
         return 1
 
     return 1 if fehler else 0
