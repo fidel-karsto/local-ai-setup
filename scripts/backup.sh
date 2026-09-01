@@ -3,7 +3,6 @@
 #
 # Sichert:
 #   - Docker-Volume open-webui-data   (Nutzer, Chats, Wissenssammlungen)
-#   - Docker-Volume chroma-data       (RAG-Index, Variante B)
 #   - Manifest des Indexers           (STATE_FILE, Default /srv/heim-ki/rag-index-state.json)
 # Bewusst NICHT gesichert: ollama-data — Modelle sind jederzeit per
 # "ollama pull" wiederherstellbar und würden das Backup nur aufblähen.
@@ -55,7 +54,6 @@ backup_volume() {
 }
 
 backup_volume open-webui-data
-backup_volume chroma-data
 
 if [ -f "$STATE_FILE" ]; then
     cp "$STATE_FILE" "$BACKUP_DIR/rag-index-state-${STAMP}.json"
