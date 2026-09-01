@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- macOS-Pendant zum systemd-Timer (Tutorial §7):
+     nächtlicher Dokument-Sync um 2:00 Uhr.
+
+     Bewusst ein LaunchAgent (Nutzer-Session), KEIN LaunchDaemon: Der Sync
+     braucht Open WebUI im Container (Docker Desktop/OrbStack laufen nur in
+     einer angemeldeten Session) — und er braucht die GPU, die einem
+     root-Daemon ohne Session nicht zur Verfügung steht. Für den Betrieb ohne
+     angesteckten Monitor: automatische Anmeldung aktivieren, siehe §3
+     "Unbeaufsichtigter Betrieb".
+
+     Installation (ohne sudo):
+       mkdir -p ~/Library/LaunchAgents
+       cp scripts/launchd/de.heim-ki.doc-sync.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/de.heim-ki.doc-sync.plist
+
+     Verpasste Läufe werden beim Aufwachen aus dem Ruhezustand nachgeholt,
+     nicht aber nach einem kompletten Shutdown oder ohne angemeldete Session. -->
+<dict>
+    <key>Label</key>
+    <string>de.heim-ki.doc-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/heim-ki/scripts/.venv/bin/python</string>
+        <string>/opt/heim-ki/scripts/doc-sync.py</string>
+    </array>
+
+    <!-- Kein OMP_NUM_THREADS hier: nativ gemessen (188-seitiger Scan) war die
+         Thread-Zahl wirkungslos — 4/6/8/12 Threads ergaben 180,2 / 180,2 /
+         181,4 / 180,8 Sekunden, eine Spanne von 0,7 %. Der native Weg hängt
+         an MPS und Apple Vision, nicht an CPU-Threads; der Docling-Default
+         genügt. Die ausgeprägte U-Kurve mit Optimum bei 6 Threads gilt nur
+         für den Docling-Container — dort greift stattdessen
+         DOCLING_OMP_THREADS aus der .env. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DOCS_DIR</key>
+        <string>/opt/heim-ki/dokumente</string>
+        <key>STATE_FILE</key>
+        <string>/opt/heim-ki/doc-sync-state.json</string>
+        <key>CACHE_DIR</key>
+        <string>/opt/heim-ki/cache</string>
+        <key>LOCK_FILE</key>
+        <string>/opt/heim-ki/doc-sync.lock</string>
+        <key>WEBUI_URL</key>
+        <string>http://127.0.0.1:3000</string>
+        <key>WEBUI_API_KEY_FILE</key>
+        <string>/opt/heim-ki/webui-api-key</string>
+        <key>KNOWLEDGE_NAME</key>
+        <string>Heim-Dokumente</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/opt/heim-ki/logs/doc-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/heim-ki/logs/doc-sync.log</string>
+</dict>
+</plist>

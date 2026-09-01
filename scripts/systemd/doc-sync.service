@@ -1,0 +1,56 @@
+[Unit]
+Description=Dokument-Sync: Docling nativ -> Open-WebUI-Wissenssammlung
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# Läuft bewusst NICHT als root: gebraucht werden nur Lesezugriff auf
+# /srv/dokumente und HTTP zu Open WebUI. Den Account anlegen mit:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin heim-ki
+User=heim-ki
+Group=heim-ki
+ExecStart=/srv/scripts/.venv/bin/python /srv/scripts/doc-sync.py
+Nice=10
+
+# Kein OMP_NUM_THREADS hier: nativ gemessen (188-seitiger Scan) war die
+# Thread-Zahl wirkungslos — 4/6/8/12 Threads ergaben 180,2 / 180,2 / 181,4 /
+# 180,8 Sekunden, eine Spanne von 0,7 %. Der native Weg hängt an MPS und
+# Apple Vision, nicht an CPU-Threads; der Docling-Default genügt. Die
+# ausgeprägte U-Kurve mit Optimum bei 6 Threads gilt nur für den
+# Docling-Container — dort greift stattdessen DOCLING_OMP_THREADS aus der
+# .env.
+
+# --- Sandbox ---------------------------------------------------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# ACHTUNG: Hier steht bewusst KEIN PrivateDevices=yes. Die Vorgänger-Unit
+# (rag-indexer.service) hatte es, und es verbarg /dev/nvidia* vor dem Dienst —
+# torch.cuda.is_available() lieferte False und Docling rechnete auf der CPU.
+# Genau das soll dieser Umbau abstellen. Wer die GPU nicht braucht, kann die
+# Zeile ergänzen und nimmt dafür einen deutlich längeren Lauf in Kauf.
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+# AF_UNIX wird für die Namensauflösung über nscd/systemd-resolved gebraucht:
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Muss existieren und heim-ki gehören, sonst startet die Unit nicht:
+#   sudo install -d -o heim-ki -g heim-ki -m 0750 /srv/heim-ki
+ReadWritePaths=/srv/heim-ki
+
+# docling lädt seine Layout- und OCR-Modelle beim ersten Lauf über den
+# HuggingFace Hub nach — per Default nach $HOME/.cache. Für heim-ki
+# (--no-create-home) existiert kein $HOME, und ProtectHome=yes blendet /home
+# ohnehin aus. Deshalb aktiv unter den freigegebenen ReadWritePaths umlenken:
+Environment=HOME=/srv/heim-ki/.home
+Environment=HF_HOME=/srv/heim-ki/.cache/huggingface
+Environment=XDG_CACHE_HOME=/srv/heim-ki/.cache
+
+# Konfiguration bei Bedarf (Defaults siehe Kopf von doc-sync.py):
+# Environment=DOCS_DIR=/srv/dokumente
+# Environment=STATE_FILE=/srv/heim-ki/doc-sync-state.json
+# Environment=CACHE_DIR=/srv/heim-ki/cache
+# Environment=WEBUI_URL=http://127.0.0.1:3000
+# Environment=WEBUI_API_KEY_FILE=/srv/heim-ki/webui-api-key
+# Environment=KNOWLEDGE_NAME=Heim-Dokumente
