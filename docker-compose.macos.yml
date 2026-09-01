@@ -49,6 +49,11 @@ services:
     profiles: ["rag"]
     environment:
       - TZ=${TZ:-Europe/Berlin}
+      # Open WebUI konvertiert synchron (POST /v1/convert/file) und wartet ohne
+      # eigenes Timeout. docling-serve gibt so einem Aufruf per Default nur
+      # 120 s und antwortet danach mit 504 — für gescannte PDFs mit OCR auf der
+      # CPU (unter macOS immer, siehe oben) viel zu knapp:
+      - DOCLING_SERVE_MAX_SYNC_WAIT=${DOCLING_SERVE_MAX_SYNC_WAIT:-3600}
     healthcheck:
       test:
         [
