@@ -54,6 +54,9 @@ services:
       # 120 s und antwortet danach mit 504 — für gescannte PDFs mit OCR auf der
       # CPU (unter macOS immer, siehe oben) viel zu knapp:
       - DOCLING_SERVE_MAX_SYNC_WAIT=${DOCLING_SERVE_MAX_SYNC_WAIT:-3600}
+      # Thread-Zahl für Layout und OCR. Der Image-Default 4 lässt Leistung
+      # liegen, mehr als 6 kostet welche — Messwerte in der .env.example:
+      - OMP_NUM_THREADS=${DOCLING_OMP_THREADS:-6}
     healthcheck:
       test:
         [
