@@ -514,6 +514,8 @@ Mit `64` und `4` werden daraus ~16 Batch-Anfragen, von denen höchstens vier par
 >     print(k, '=', v)"
 > ```
 
+**Noch ein Handgriff:** `bge-m3` steht nach dem `ollama pull` auch in der Modellauswahl des Chats — wo es nichts zu suchen hat. Wählt man es dort versehentlich aus, bricht die Antwort ab mit `"bge-m3:latest" does not support chat`; im Backend-Log steht dazu nichts, Open WebUI lehnt die Anfrage direkt ab. Deshalb unter *Admin-Bereich → Einstellungen → Modelle* bei `bge-m3` die **Sichtbarkeit ausschalten**. Als Embedding-Modell bleibt es voll funktionsfähig — dafür spricht Open WebUI direkt mit Ollama und geht nicht über die Modellliste.
+
 **3. Dokumente reinschmeißen:** In Open WebUI unter *Arbeitsbereich → Wissen* eine Sammlung anlegen und „alle Docs, die hier so rumfliegen" hochladen. Im Chat bindet man die Sammlung mit `#Sammlungsname` ein — fertig ist die Dokumenten-KI.
 
 **Quellen:**
@@ -871,6 +873,7 @@ Bei Verdacht, dass eine der Absicherungen aus §5–§7 nicht greift, zuerst die
 | Upload scheitert mit `413 Request Entity Too Large` | `client_max_body_size` fehlt/zu klein — in `nginx/heim-ki.conf` enthalten (100 MB), NGINX neu laden. |
 | Docling-Container stürzt ab / Host swappt bei großen PDFs | Docling-OCR ist RAM-hungrig. Große Scans aufteilen, oder dem Service in der Compose-Datei ein `mem_limit` geben; notfalls Dokumente einzeln hochladen. |
 | `ollama-ws.heim.lan` nach Windows-Neustart tot (WSL-Weg) | Die WSL-IP ist gewandert — Portproxy neu setzen oder auf *mirrored networking* bzw. die native App umstellen (§5). |
+| Chat antwortet `"bge-m3:latest" does not support chat` | Im Chat ist das Embedding-Modell als Antwortmodell ausgewählt. Unten im Eingabefeld ein echtes Chat-Modell wählen und die Frage neu senden; damit es nicht wieder passiert, `bge-m3` unter *Admin-Bereich → Einstellungen → Modelle* ausblenden (§7 Variante A). |
 | Upload bricht ab mit `Ollama embed error (503): ... maximum pending requests exceeded` | Die Extraktion war erfolgreich, das Einbetten überrennt Ollamas Warteschlange. In den *Admin-Einstellungen → Dokumente* **Embedding Batch Size** auf 64 und **Concurrent Requests** auf 4 setzen (§7 Variante A) — nicht über die `.env`, die Werte kommen aus der Datenbank. |
 | Upload bricht ab, `"POST /v1/convert/file" 504` in `docker logs docling` | Die Konvertierung überschreitet `max_sync_wait` von docling-serve (Image-Default 120 s). `DOCLING_SERVE_MAX_SYNC_WAIT` in der `.env` erhöhen (§7 Variante A). Bricht es *sofort* ab und ist das Ergebnis leer, ist eher das PDF defekt — prüfen mit `python3 -c "from pypdf import PdfReader; print(len(PdfReader('datei.pdf').pages))"`; „Stream has ended unexpectedly" heißt: unvollständig heruntergeladen. |
 | `port is already allocated` beim Start | Ein anderer Dienst hält den Host-Port. Wer? `lsof -nP -iTCP:<port> -sTCP:LISTEN`, dazu `docker ps --format '{{.Names}}\t{{.Ports}}'`. Achtung: ein Container auf `0.0.0.0:<port>` blockiert auch ein `127.0.0.1:<port>`. Für Chroma lässt sich der Host-Port per `CHROMA_HOST_PORT` in der `.env` umlegen (§7 Variante B) — dann `CHROMA_URL` des Indexers mitziehen. |
