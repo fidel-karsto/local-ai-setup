@@ -492,6 +492,27 @@ Ein Port-Mapping braucht Docling nicht: Open WebUI erreicht den Container über 
 **2. Open WebUI konfigurieren** unter *Admin-Einstellungen → Dokumente*:
 - **Inhaltsextraktion / Content Extraction Engine:** `Docling` mit URL `http://docling:5001`
 - **Embedding-Modell:** Engine `Ollama`, Modell `bge-m3`, URL `http://ollama:11434` — **auf einem macOS-Host stattdessen** `http://host.docker.internal:11434` (dort läuft Ollama ja nativ auf dem Mac, nicht als Container im Compose-Netz)
+- **Embedding Batch Size:** `1` → **`64`**
+- **Concurrent Requests** (beim Embedding): `0` → **`4`**
+
+Die letzten beiden Werte sind bei großen Dokumenten nicht optional. Mit dem Default `batch_size=1` und `concurrent_requests=0` („unbegrenzt") schickt Open WebUI **jeden einzelnen Chunk als eigene Anfrage — und alle gleichzeitig**. Ein 190-Seiten-Scan ergibt rund 1000 Chunks, Ollamas Warteschlange fasst per Default aber nur 512 (`OLLAMA_MAX_QUEUE`). Der Import stirbt dann nach erfolgreicher Extraktion mit:
+
+```
+Ollama embed error (503): server busy, please try again.
+maximum pending requests exceeded
+```
+
+Mit `64` und `4` werden daraus ~16 Batch-Anfragen, von denen höchstens vier parallel laufen — schonender *und* schneller, weil bge-m3 einen Batch fast so schnell verarbeitet wie einen Einzeltext.
+
+> **Achtung:** Beide Werte sind *PersistentConfig* — Open WebUI liest sie nur beim allerersten Start aus der Umgebung und nimmt sie danach aus der Datenbank. Ein Eintrag in der `.env` oder der Compose-Datei bleibt also wirkungslos; die Änderung muss durch die Oberfläche. Nachsehen lässt sich der gespeicherte Stand mit:
+>
+> ```bash
+> docker exec open-webui python3 -c "
+> import sqlite3
+> db = sqlite3.connect('file:/app/backend/data/webui.db?mode=ro', uri=True)
+> for k, v in db.execute(\"select key, value from config where key like 'rag.embedding%'\"):
+>     print(k, '=', v)"
+> ```
 
 **3. Dokumente reinschmeißen:** In Open WebUI unter *Arbeitsbereich → Wissen* eine Sammlung anlegen und „alle Docs, die hier so rumfliegen" hochladen. Im Chat bindet man die Sammlung mit `#Sammlungsname` ein — fertig ist die Dokumenten-KI.
 
@@ -850,6 +871,7 @@ Bei Verdacht, dass eine der Absicherungen aus §5–§7 nicht greift, zuerst die
 | Upload scheitert mit `413 Request Entity Too Large` | `client_max_body_size` fehlt/zu klein — in `nginx/heim-ki.conf` enthalten (100 MB), NGINX neu laden. |
 | Docling-Container stürzt ab / Host swappt bei großen PDFs | Docling-OCR ist RAM-hungrig. Große Scans aufteilen, oder dem Service in der Compose-Datei ein `mem_limit` geben; notfalls Dokumente einzeln hochladen. |
 | `ollama-ws.heim.lan` nach Windows-Neustart tot (WSL-Weg) | Die WSL-IP ist gewandert — Portproxy neu setzen oder auf *mirrored networking* bzw. die native App umstellen (§5). |
+| Upload bricht ab mit `Ollama embed error (503): ... maximum pending requests exceeded` | Die Extraktion war erfolgreich, das Einbetten überrennt Ollamas Warteschlange. In den *Admin-Einstellungen → Dokumente* **Embedding Batch Size** auf 64 und **Concurrent Requests** auf 4 setzen (§7 Variante A) — nicht über die `.env`, die Werte kommen aus der Datenbank. |
 | Upload bricht ab, `"POST /v1/convert/file" 504` in `docker logs docling` | Die Konvertierung überschreitet `max_sync_wait` von docling-serve (Image-Default 120 s). `DOCLING_SERVE_MAX_SYNC_WAIT` in der `.env` erhöhen (§7 Variante A). Bricht es *sofort* ab und ist das Ergebnis leer, ist eher das PDF defekt — prüfen mit `python3 -c "from pypdf import PdfReader; print(len(PdfReader('datei.pdf').pages))"`; „Stream has ended unexpectedly" heißt: unvollständig heruntergeladen. |
 | `port is already allocated` beim Start | Ein anderer Dienst hält den Host-Port. Wer? `lsof -nP -iTCP:<port> -sTCP:LISTEN`, dazu `docker ps --format '{{.Names}}\t{{.Ports}}'`. Achtung: ein Container auf `0.0.0.0:<port>` blockiert auch ein `127.0.0.1:<port>`. Für Chroma lässt sich der Host-Port per `CHROMA_HOST_PORT` in der `.env` umlegen (§7 Variante B) — dann `CHROMA_URL` des Indexers mitziehen. |
 | Werkzeug „Heim-Dokumente" findet nichts | Läuft Chroma? (`docker ps` → `chroma (healthy)`; ein bloßes `docker compose ps` zeigt Profil-Dienste wie `chroma` nur mit `--profile rag-batch` — und auf macOS nur mit `-f docker-compose.macos.yml`). Hat der Indexer geschrieben? (Linux: `journalctl -u rag-indexer.service`, macOS: `/opt/heim-ki/logs/rag-indexer.log`). Stimmen Collection-Name und `chroma_url` in den Valves des Werkzeugs? |
