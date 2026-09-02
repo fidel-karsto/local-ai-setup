@@ -10,7 +10,12 @@ Type=oneshot
 #   sudo useradd --system --no-create-home --shell /usr/sbin/nologin heim-ki
 User=heim-ki
 Group=heim-ki
-ExecStart=/srv/scripts/.venv/bin/python /srv/scripts/doc-sync.py
+# Aufgerufen wird der Wrapper, nicht das Python direkt: er schreibt bei einem
+# Fehlschlag einen Eintrag mit Fehlerprioritaet ins journald (journalctl -p err).
+# Der Exit-Code wird durchgereicht, die Unit gilt also weiterhin als failed.
+ExecStart=/srv/scripts/doc-sync-run.sh
+Environment=DOC_SYNC_PYTHON=/srv/scripts/.venv/bin/python
+Environment=DOC_SYNC_SKRIPT=/srv/scripts/doc-sync.py
 Nice=10
 
 # Kein OMP_NUM_THREADS hier: nativ gemessen (188-seitiger Scan) war die

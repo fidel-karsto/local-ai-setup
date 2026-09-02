@@ -22,10 +22,13 @@
     <key>Label</key>
     <string>de.heim-ki.doc-sync</string>
 
+    <!-- Aufgerufen wird der Wrapper, nicht das Python direkt: er wertet den
+         Exit-Code aus und schickt bei einem Fehlschlag eine Mitteilung.
+         Ohne ihn scheitert der Nachtlauf lautlos, und die Sammlung bleibt
+         einfach unvollstaendig. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/opt/heim-ki/scripts/.venv/bin/python</string>
-        <string>/opt/heim-ki/scripts/doc-sync.py</string>
+        <string>/opt/heim-ki/scripts/doc-sync-run.sh</string>
     </array>
 
     <!-- Kein OMP_NUM_THREADS hier: nativ gemessen (188-seitiger Scan) war die
@@ -37,6 +40,11 @@
          DOCLING_OMP_THREADS aus der .env. -->
     <key>EnvironmentVariables</key>
     <dict>
+        <!-- Womit der Wrapper das eigentliche Skript startet: -->
+        <key>DOC_SYNC_PYTHON</key>
+        <string>/opt/heim-ki/scripts/.venv/bin/python</string>
+        <key>DOC_SYNC_SKRIPT</key>
+        <string>/opt/heim-ki/scripts/doc-sync.py</string>
         <key>DOCS_DIR</key>
         <string>/opt/heim-ki/dokumente</string>
         <key>STATE_FILE</key>
