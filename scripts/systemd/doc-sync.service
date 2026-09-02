@@ -43,6 +43,12 @@ ReadWritePaths=/srv/heim-ki
 # HuggingFace Hub nach — per Default nach $HOME/.cache. Für heim-ki
 # (--no-create-home) existiert kein $HOME, und ProtectHome=yes blendet /home
 # ohnehin aus. Deshalb aktiv unter den freigegebenen ReadWritePaths umlenken:
+#
+# Der HuggingFace Hub ist dabei nicht die einzige Quelle: Unter Linux wählt
+# Doclings Automatik EasyOCR oder RapidOCR, und die laden ihre Modelle aus
+# eigenen Quellen nach ~/.EasyOCR bzw. ~/.rapidocr, also nicht in den
+# HuggingFace-Baum. Genau deshalb steht hier HOME und nicht nur HF_HOME — die
+# HOME-Umlenkung fängt beide Fälle ab.
 Environment=HOME=/srv/heim-ki/.home
 Environment=HF_HOME=/srv/heim-ki/.cache/huggingface
 Environment=XDG_CACHE_HOME=/srv/heim-ki/.cache

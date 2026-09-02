@@ -633,6 +633,12 @@ sudo cp scripts/doc-sync.py scripts/docconvert.py scripts/webui_client.py \
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin heim-ki
 sudo install -d -o heim-ki -g heim-ki -m 0750 /srv/heim-ki
 
+# The cache directories that the unit's HOME, HF_HOME and XDG_CACHE_HOME
+# point at. There's much to suggest the libraries create them on the first
+# run by themselves — but that isn't proven, and the step costs nothing:
+sudo install -d -o heim-ki -g heim-ki -m 0750 \
+     /srv/heim-ki/.home /srv/heim-ki/.cache /srv/heim-ki/.cache/huggingface
+
 # /srv/scripts is deliberately owned by root: the timer executes its
 # contents, and the login user must not be able to modify what root runs.
 sudo chown -R root:root /srv/scripts

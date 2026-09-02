@@ -633,6 +633,12 @@ sudo cp scripts/doc-sync.py scripts/docconvert.py scripts/webui_client.py \
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin heim-ki
 sudo install -d -o heim-ki -g heim-ki -m 0750 /srv/heim-ki
 
+# Cache-Verzeichnisse, auf die HOME, HF_HOME und XDG_CACHE_HOME der Unit
+# zeigen. Vieles spricht dafür, dass die Bibliotheken sie beim ersten Lauf
+# selbst anlegen — nachgewiesen ist es nicht, und der Schritt kostet nichts:
+sudo install -d -o heim-ki -g heim-ki -m 0750 \
+     /srv/heim-ki/.home /srv/heim-ki/.cache /srv/heim-ki/.cache/huggingface
+
 # /srv/scripts gehört bewusst root: der Timer führt den Inhalt aus, und was
 # root ausführt, darf der Login-User nicht ändern können.
 sudo chown -R root:root /srv/scripts
