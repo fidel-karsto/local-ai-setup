@@ -96,9 +96,14 @@ Linux-Pfade:
 | `DOC_SYNC_PYTHON` | `/srv/scripts/.venv/bin/python` | Interpreter |
 | `DOC_SYNC_SKRIPT` | `/srv/scripts/doc-sync.py` | Skript |
 
-Die Meldung nennt den Exit-Code und den Ort des Logs. Sie wird ohne
-Interpolation fremder Werte in den AppleScript-Ausdruck gebaut — ein Pfad mit
-Anführungszeichen würde den Aufruf sonst zerlegen.
+Die Meldung nennt den Exit-Code und, als **fest im jeweiligen Zweig
+verdrahteten Text**, wo das Log zu finden ist — auf macOS
+`/opt/heim-ki/logs/doc-sync.log`, unter Linux `journalctl -u doc-sync`. In den
+AppleScript-Ausdruck wird ausschliesslich die Zahl des Exit-Codes interpoliert;
+ein aus der Umgebung übernommener Pfad mit Anführungszeichen würde den Aufruf
+sonst zerlegen. Der Preis ist ein Log-Pfad, der bei abweichender Installation
+nicht stimmt — das ist ein Hinweis in einer Meldung, kein Verhalten, und damit
+das kleinere Übel gegenüber einer zerbrechlichen Zeichenkette.
 
 ## 2. Tests
 
