@@ -621,6 +621,10 @@ Natively on the same Mac, Docling does see the hardware and picks the fast path 
 
 **On OCR quality:** Apple Vision and RapidOCR were compared on the same document. Both misread things — umlauts, digits, table cells — just in different places; no systematic advantage of one over the other was discernible. That's also why no OCR engine is hard-wired in [`scripts/docconvert.py`](scripts/docconvert.py): Docling decides for itself (`device='auto'` resolves to `mps`, `ocr_engine=auto` picks `ocrmac`, i.e. Apple Vision). For the same reason there's no platform switch in the code: the same automatic applies on Linux, where it picks CUDA and whichever OCR engine is available there.
 
+> **Careful — the entire speed gain hangs on this:** Docling's automatic only finds Apple Vision if the `ocrmac` package is installed. `pip install docling` does **not** pull it in, and without it the automatic falls back to RapidOCR without a word. The same magazine then took **1058.0 s** instead of 184.9 s — a factor of 5.7, which makes it slower than the container this path is meant to replace. That's why `ocrmac` sits in [`scripts/requirements.txt`](scripts/requirements.txt) and is not optional there. A platform marker keeps it away from Linux, where it cannot be installed.
+>
+> Which engine actually runs is worth checking — the step is in step 1 below.
+
 **1. Create folders, scripts and the venv** — with its own venv, so the nightly call uses the same environment as the installation. On Linux everything lives under `/srv`, on macOS under `/opt/heim-ki` (on the Mac, `/srv` can't be created because of the sealed system volume):
 
 ```bash
@@ -669,7 +673,19 @@ python3 -m venv /opt/heim-ki/scripts/.venv
 /opt/heim-ki/scripts/.venv/bin/pip install -r /opt/heim-ki/scripts/requirements.txt
 ```
 
-**All four Python files have to come along.** `doc-sync.py` is only the orchestration; it imports `docscan` (file selection including symlink protection), `docconvert` (the Docling conversion) and `webui_client` (the REST calls). If one of them is missing, the run dies at import time. `requirements.txt` pulls in `docling>=2.0,<3` and `requests>=2.31` — the upper bound on docling is deliberate: a major jump could silently upend the pipeline options in `docconvert.py`, and you'd only notice by way of worse conversions.
+**All four Python files have to come along.** `doc-sync.py` is only the orchestration; it imports `docscan` (file selection including symlink protection), `docconvert` (the Docling conversion) and `webui_client` (the REST calls). If one of them is missing, the run dies at import time. `requirements.txt` pulls in `docling>=2.0,<3`, `requests>=2.31` and, on macOS, `ocrmac` — the upper bound on docling is deliberate: a major jump could silently upend the pipeline options in `docconvert.py`, and you'd only notice by way of worse conversions.
+
+**On a Mac, check afterwards that the fast OCR path is actually there.** This is the check that surfaces the difference between 185 and 1058 seconds — before you discover it on a real corpus:
+
+```bash
+/opt/heim-ki/scripts/.venv/bin/python -c "
+import importlib.util
+print('ocrmac:', importlib.util.find_spec('ocrmac') is not None)"
+```
+
+Expected: `ocrmac: True`. If it says `False`, pip didn't install the package — everything still runs, but Docling quietly uses RapidOCR instead of Apple Vision and takes 5.7 times as long. Fix it with `/opt/heim-ki/scripts/.venv/bin/pip install ocrmac`.
+
+If you want to see it directly, a real conversion with INFO logging enabled prints `Auto OCR model selected ocrmac.` In normal operation `doc-sync.py` doesn't log that — hence the package check above rather than a look at the log.
 
 **2. Enable API keys globally** — the step without which Variant C never gets off the ground. Open WebUI ships with API keys **switched off**; `open_webui/config.py` has `ENABLE_API_KEYS = os.getenv('ENABLE_API_KEYS', 'False')`. As long as that stands, there is no key to generate in the UI, and `doc-sync.py` has nothing to authenticate with.
 

@@ -621,6 +621,10 @@ Nativ auf demselben Mac sieht Docling die Hardware dagegen und wählt von selbst
 
 **Zur OCR-Qualität:** Apple Vision und RapidOCR wurden am selben Dokument verglichen. Beide verlesen sich — bei Umlauten, bei Ziffern, in Tabellenzellen —, nur an unterschiedlichen Stellen; ein systematischer Rückstand des einen gegenüber dem anderen war nicht zu erkennen. Deshalb ist in [`scripts/docconvert.py`](scripts/docconvert.py) auch kein OCR-Motor fest verdrahtet: Docling entscheidet selbst (`device='auto'` löst zu `mps` auf, `ocr_engine=auto` wählt `ocrmac`, also Apple Vision). Aus demselben Grund steht dort keine plattformabhängige Fallunterscheidung im Code: Dieselbe Automatik greift unter Linux ebenso, wählt dort aber CUDA und den dort verfügbaren OCR-Motor.
 
+> **Achtung — hiervon hängt der ganze Zeitgewinn ab:** Doclings Automatik findet Apple Vision nur, wenn das Paket `ocrmac` installiert ist. `pip install docling` bringt es **nicht** mit; ohne es fällt die Automatik kommentarlos auf RapidOCR zurück. Dasselbe Heft brauchte so **1058,0 s** statt 184,9 s — Faktor 5,7, und damit langsamer als der Container, den dieser Weg gerade ersetzen soll. Deshalb steht `ocrmac` in [`scripts/requirements.txt`](scripts/requirements.txt) und ist dort nicht optional. Ein Plattform-Marker hält es von Linux fern, wo es sich nicht installieren lässt.
+>
+> Welcher Motor tatsächlich läuft, verrät Docling selbst — der Prüfschritt steht unten in Schritt 1.
+
 **1. Ordner, Skripte und venv anlegen** — mit eigenem venv, damit der nächtliche Aufruf dieselbe Umgebung nutzt wie die Installation. Unter Linux liegt alles unter `/srv`, unter macOS unter `/opt/heim-ki` (auf dem Mac ist `/srv` wegen des versiegelten Systemvolumes nicht anlegbar):
 
 ```bash
@@ -669,7 +673,19 @@ python3 -m venv /opt/heim-ki/scripts/.venv
 /opt/heim-ki/scripts/.venv/bin/pip install -r /opt/heim-ki/scripts/requirements.txt
 ```
 
-**Alle vier Python-Dateien müssen mit.** `doc-sync.py` ist nur die Ablaufsteuerung; es importiert `docscan` (Dateiauswahl samt Symlink-Schutz), `docconvert` (die Docling-Konvertierung) und `webui_client` (die REST-Aufrufe). Fehlt eines davon, bricht der Lauf beim Import ab. `requirements.txt` zieht `docling>=2.0,<3` und `requests>=2.31` — die Obergrenze bei docling ist Absicht: Ein Major-Sprung könnte die Pipeline-Optionen in `docconvert.py` lautlos umwerfen, und das würde man erst an schlechteren Konvertaten merken.
+**Alle vier Python-Dateien müssen mit.** `doc-sync.py` ist nur die Ablaufsteuerung; es importiert `docscan` (Dateiauswahl samt Symlink-Schutz), `docconvert` (die Docling-Konvertierung) und `webui_client` (die REST-Aufrufe). Fehlt eines davon, bricht der Lauf beim Import ab. `requirements.txt` zieht `docling>=2.0,<3`, `requests>=2.31` und unter macOS `ocrmac` — die Obergrenze bei docling ist Absicht: Ein Major-Sprung könnte die Pipeline-Optionen in `docconvert.py` lautlos umwerfen, und das würde man erst an schlechteren Konvertaten merken.
+
+**Auf einem Mac danach nachsehen, ob der schnelle OCR-Weg wirklich da ist.** Das ist der Prüfschritt, der den Unterschied zwischen 185 und 1058 Sekunden sichtbar macht — und zwar bevor du ihn an einem echten Bestand bemerkst:
+
+```bash
+/opt/heim-ki/scripts/.venv/bin/python -c "
+import importlib.util
+print('ocrmac:', importlib.util.find_spec('ocrmac') is not None)"
+```
+
+Erwartet wird `ocrmac: True`. Steht dort `False`, hat `pip` das Paket nicht installiert — dann läuft zwar alles, aber Docling nimmt still RapidOCR statt Apple Vision und braucht das 5,7-Fache. Nachholen mit `/opt/heim-ki/scripts/.venv/bin/pip install ocrmac`.
+
+Wer es genau wissen will, sieht bei einer echten Konvertierung mit eingeschaltetem INFO-Logging die Zeile `Auto OCR model selected ocrmac.` Im Normalbetrieb protokolliert `doc-sync.py` das nicht — deshalb der Paketcheck oben statt eines Blicks ins Log.
 
 **2. API-Schlüssel global freischalten** — der Schritt, ohne den Variante C gar nicht erst anfängt. Open WebUI liefert die API-Schlüssel **ab Werk abgeschaltet** aus; in `open_webui/config.py` steht `ENABLE_API_KEYS = os.getenv('ENABLE_API_KEYS', 'False')`. Solange das so bleibt, gibt es in der Oberfläche keinen Schlüssel zu erzeugen, und `doc-sync.py` hat nichts, womit es sich anmelden könnte.
 
