@@ -631,7 +631,8 @@ Natively on the same Mac, Docling does see the hardware and picks the fast path 
 # Linux:
 sudo mkdir -p /srv/scripts /srv/dokumente
 sudo cp scripts/doc-sync.py scripts/docconvert.py scripts/webui_client.py \
-        scripts/docscan.py scripts/requirements.txt /srv/scripts/
+        scripts/docscan.py scripts/doc-sync-run.sh scripts/requirements.txt /srv/scripts/
+sudo chmod +x /srv/scripts/doc-sync-run.sh
 
 # System account for the nightly run:
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin heim-ki
@@ -668,12 +669,13 @@ sudo chmod 2750 /srv/dokumente
 sudo mkdir -p /opt/heim-ki/scripts /opt/heim-ki/dokumente /opt/heim-ki/logs /opt/heim-ki/backups
 sudo chown -R "$USER" /opt/heim-ki
 cp scripts/doc-sync.py scripts/docconvert.py scripts/webui_client.py \
-   scripts/docscan.py scripts/requirements.txt /opt/heim-ki/scripts/
+   scripts/docscan.py scripts/doc-sync-run.sh scripts/requirements.txt /opt/heim-ki/scripts/
+chmod +x /opt/heim-ki/scripts/doc-sync-run.sh
 python3 -m venv /opt/heim-ki/scripts/.venv
 /opt/heim-ki/scripts/.venv/bin/pip install -r /opt/heim-ki/scripts/requirements.txt
 ```
 
-**All four Python files have to come along.** `doc-sync.py` is only the orchestration; it imports `docscan` (file selection including symlink protection), `docconvert` (the Docling conversion) and `webui_client` (the REST calls). If one of them is missing, the run dies at import time. `requirements.txt` pulls in `docling>=2.0,<3`, `requests>=2.31` and, on macOS, `ocrmac` — the upper bound on docling is deliberate: a major jump could silently upend the pipeline options in `docconvert.py`, and you'd only notice by way of worse conversions.
+**All four Python files and the wrapper have to come along.** `doc-sync.py` is only the orchestration; it imports `docscan` (file selection including symlink protection), `docconvert` (the Docling conversion) and `webui_client` (the REST calls). If one of them is missing, the run dies at import time. `requirements.txt` pulls in `docling>=2.0,<3`, `requests>=2.31` and, on macOS, `ocrmac` — the upper bound on docling is deliberate: a major jump could silently upend the pipeline options in `docconvert.py`, and you'd only notice by way of worse conversions.
 
 **On a Mac, check afterwards that the fast OCR path is actually there.** This is the check that surfaces the difference between 185 and 1058 seconds — before you discover it on a real corpus:
 
@@ -800,6 +802,20 @@ journalctl -u doc-sync.service
 > **Why the unit doesn't set `PrivateDevices=yes`.** Its predecessor did. The directive hides `/dev/nvidia*`, `torch.cuda.is_available()` then returns `False`, and Docling computes layout and OCR on the CPU — which is precisely the state this rework is meant to abolish. The line is therefore absent on purpose, and the `.service` file says so in a comment. On a host without a GPU, or if you weigh the hardening higher than the runtime, you can add it back and accept a markedly longer nightly run.
 
 On the very first run, Docling downloads its models from HuggingFace. The service runs as `heim-ki` (`--no-create-home`) and therefore has no `$HOME` at all, and `ProtectHome=yes` hides `/home` anyway — so the unit actively redirects `HOME`, `HF_HOME` and `XDG_CACHE_HOME` under `/srv/heim-ki`. That directory has to exist and be owned by `heim-ki` (done above with `install -d -o heim-ki -g heim-ki`), otherwise the unit won't start. Known limitation: should a future docling version instead want to write package-relatively into the venv, that would still fail under `ProtectSystem=strict` — check this on the first run with whichever version is actually installed.
+
+**What happens when the nightly run fails?** So far: nothing you'd see. The job runs at two in the morning, nobody is watching, and a failure would sit in the log and stay there. That's why the unit and the plist don't call Python directly but the wrapper [`scripts/doc-sync-run.sh`](scripts/doc-sync-run.sh). It inspects the exit code and reports anything other than 0 — on macOS as a system notification, on Linux as an error-priority entry in the journal, findable with `journalctl -u doc-sync -p err`.
+
+Inspecting the exit code rather than `doc-sync.py`'s own error count is deliberate. It catches crashes the script never logs — a traceback thrown before the count is even reached would never make it into a message the script writes at the end of its run. The exit code is passed through unchanged, so `systemctl status` still shows the failure; the notification comes on top and replaces nothing.
+
+> **The limit of this mechanism, so it doesn't get overlooked:** a run that *never happens* reports nothing. If the Mac was off, nobody was logged in, or the LaunchAgent was never loaded, no wrapper runs either — and a process that doesn't start can't complain. In a home setup that is precisely the most likely reason for a stale index. To rule it out you have to check from the outside, for instance by glancing at the modification date of `doc-sync-state.json`.
+
+On macOS the notification only appears if script notifications are permitted. Try it once:
+
+```bash
+osascript -e 'display notification "Test" with title "Heim-KI"'
+```
+
+If nothing arrives, grant the permission in *System Settings* under *Notifications*. The return value of `osascript` is no help here — it reports success even when macOS swallows the notification.
 
 *macOS* — as a LaunchAgent ([`scripts/launchd/de.heim-ki.doc-sync.plist`](scripts/launchd/de.heim-ki.doc-sync.plist)); the `/opt/heim-ki` paths are already in the plist as `EnvironmentVariables`:
 
