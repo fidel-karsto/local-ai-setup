@@ -109,6 +109,16 @@ class TestWebUIClient(unittest.TestCase):
         _, _, headers, _ = AUFRUFE[0]
         self.assertEqual(headers["Authorization"], "Bearer sk-test")
 
+    def test_upload_verarbeitet_synchron(self):
+        # Ohne process_in_background=false kehrt der Upload sofort zurueck und
+        # Open WebUI verarbeitet erst danach. Das folgende /file/add sieht dann
+        # ein leeres file.data und antwortet mit HTTP 400 "The content provided
+        # is empty." Genau so ist der erste echte Lauf gescheitert.
+        ANTWORTEN[("POST", "/api/v1/files/")] = [(200, {"id": "f1"})]
+        self.client.upload_markdown("heft.md", "# Inhalt")
+        _, pfad, _, _ = AUFRUFE[0]
+        self.assertIn("process_in_background=false", pfad)
+
     def test_upload_schickt_text_markdown(self):
         ANTWORTEN[("POST", "/api/v1/files/")] = [(200, {"id": "f1"})]
         file_id = self.client.upload_markdown("heft.md", "# Inhalt")

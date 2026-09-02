@@ -24,10 +24,22 @@ class WebUIError(RuntimeError):
 
 
 class WebUIClient:
-    def __init__(self, base_url: str, api_key: str, timeout: int = 60):
+    def __init__(
+        self, base_url: str, api_key: str, timeout: int = 60, upload_timeout: int = 1800
+    ):
+        """timeout gilt für die kurzen Aufrufe (Listen, Zuordnungen).
+
+        upload_timeout ist bewusst viel grosszügiger: Der Upload verarbeitet
+        synchron mit (siehe upload_markdown), und dazu gehören Chunking und
+        Einbettung. Ein Buch mit hunderttausenden Zeichen ergibt tausende
+        Embedding-Anfragen an Ollama — 60 Sekunden reichen dafür nicht
+        annaehernd, und ein Abbruch mittendrin hinterliesse eine hochgeladene
+        Datei, die in keiner Sammlung landet.
+        """
         self.basis = base_url.rstrip("/")
         self.kopf = {"Authorization": f"Bearer {api_key}"}
         self.timeout = timeout
+        self.upload_timeout = upload_timeout
 
     # --- innen -------------------------------------------------------------
 
@@ -91,12 +103,21 @@ class WebUIClient:
         Der Content-Type text/markdown ist der Kern des Ganzen: Open WebUIs
         _is_text_file() greift darüber und nimmt den TextLoader — der
         Docling-Container wird gar nicht erst gefragt.
+
+        process_in_background=false ist nicht optional: Per Default kehrt der
+        Upload sofort zurück und Open WebUI verarbeitet die Datei in einem
+        BackgroundTask. Das anschliessende /file/add prüft aber `file.data`
+        und antwortet, solange die Verarbeitung nicht durch ist, mit
+        HTTP 400 "The content provided is empty." Ein Batch-Job wartet
+        ohnehin — synchron ist hier also nicht nur korrekt, sondern lässt
+        einen Fehler auch dort auftauchen, wo er entsteht.
         """
         antwort = requests.post(
             f"{self.basis}/api/v1/files/",
             headers=self.kopf,
+            params={"process_in_background": "false"},
             files={"file": (dateiname, text.encode("utf-8"), "text/markdown")},
-            timeout=self.timeout,
+            timeout=self.upload_timeout,
         )
         return self._pruefe(antwort, "POST /api/v1/files/")["id"]
 
