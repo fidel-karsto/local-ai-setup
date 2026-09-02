@@ -694,12 +694,13 @@ Der Schalter sitzt in den *Admin-Einstellungen* im Bereich *Authentifizierung* u
 sudo install -o heim-ki -g heim-ki -m 600 /dev/null /srv/heim-ki/webui-api-key
 sudo -u heim-ki tee /srv/heim-ki/webui-api-key >/dev/null <<< 'sk-…'
 
-# macOS:
-printf '%s' 'sk-…' > /opt/heim-ki/webui-api-key
-chmod 600 /opt/heim-ki/webui-api-key
+# macOS — umask in der Subshell, damit die Datei gar nicht erst mit
+# offenen Rechten entsteht; ein nachträgliches chmod käme einen Moment zu spät:
+(umask 077; printf '%s' 'sk-…' > /opt/heim-ki/webui-api-key)
+ls -l /opt/heim-ki/webui-api-key    # erwartet: -rw-------
 ```
 
-Das `chmod 600` ist kein Schmuck: Der Schlüssel liegt im Klartext auf der Platte und trägt die Rechte des Kontos, mit dem er erzeugt wurde. Wer ihn lesen kann, kann in Open WebUI alles, was dieser Nutzer kann — Chats inklusive. (Fehlt der Abschnitt unter *Konto* ganz, ist Schritt 2 noch offen; bei Nicht-Admin-Konten fehlt er zusätzlich, solange die Gruppe nicht das Recht `features.api_keys` hat.)
+Der Modus `600` ist kein Schmuck: Der Schlüssel liegt im Klartext auf der Platte und trägt die Rechte des Kontos, mit dem er erzeugt wurde. Wer ihn lesen kann, kann in Open WebUI alles, was dieser Nutzer kann — Chats inklusive. (Fehlt der Abschnitt unter *Konto* ganz, ist Schritt 2 noch offen; bei Nicht-Admin-Konten fehlt er zusätzlich, solange die Gruppe nicht das Recht `features.api_keys` hat.)
 
 > **Den Schlüssel deshalb aus einem eigens angelegten, nicht-administrativen Konto ausstellen — nicht aus dem Admin-Konto.** Derselbe Prozess, der den Schlüssel im Klartext hält, lässt auch Docling laufen und parst damit fremde PDFs, DOCX- und HTML-Dateien aus einem Verzeichnis, in das der Login-Nutzer schreiben darf. Dokumentenparser sind die größte Angriffsfläche dieses Aufbaus, und der Schaden eines Fehlers in ihnen soll nicht „vollständiger Lesezugriff auf die Chats aller Haushaltsmitglieder" sein. Also in Open WebUI ein eigenes Konto für den Sync anlegen (normale Rolle, kein Admin), seiner Gruppe das Recht `features.api_keys` geben und den Schlüssel dort erzeugen. Die Wissenssammlung aus Schritt 4 gehört dann diesem Konto und muss den übrigen Nutzern unter *Arbeitsbereich → Wissen* gegebenenfalls noch freigegeben werden.
 >

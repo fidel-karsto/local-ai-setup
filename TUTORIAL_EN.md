@@ -694,12 +694,13 @@ The switch sits in the *Admin Settings* under *Authentication* and is called **A
 sudo install -o heim-ki -g heim-ki -m 600 /dev/null /srv/heim-ki/webui-api-key
 sudo -u heim-ki tee /srv/heim-ki/webui-api-key >/dev/null <<< 'sk-…'
 
-# macOS:
-printf '%s' 'sk-…' > /opt/heim-ki/webui-api-key
-chmod 600 /opt/heim-ki/webui-api-key
+# macOS — umask in a subshell, so the file never exists with open
+# permissions in the first place; a later chmod would come a moment too late:
+(umask 077; printf '%s' 'sk-…' > /opt/heim-ki/webui-api-key)
+ls -l /opt/heim-ki/webui-api-key    # expected: -rw-------
 ```
 
-The `chmod 600` isn't decoration: the key sits in plain text on disk and carries the permissions of the account it was created with. Whoever can read it can do everything in Open WebUI that this user can — chats included. (If the section under *Account* is missing entirely, step 2 is still open; on non-admin accounts it is also missing as long as the group doesn't hold the `features.api_keys` permission.)
+Mode `600` isn't decoration: the key sits in plain text on disk and carries the permissions of the account it was created with. Whoever can read it can do everything in Open WebUI that this user can — chats included. (If the section under *Account* is missing entirely, step 2 is still open; on non-admin accounts it is also missing as long as the group doesn't hold the `features.api_keys` permission.)
 
 > **So issue the key from an account created specifically for this and without admin rights — not from the admin account.** The very same process that holds the key in plain text also runs Docling, and thereby parses foreign PDFs, DOCX and HTML files out of a directory the login user may write to. Document parsers are the largest attack surface of this setup, and the damage from a flaw in one of them should not be "full read access to every household member's chats." So create a dedicated account for the sync in Open WebUI (ordinary role, not admin), give its group the `features.api_keys` permission and generate the key there. The knowledge collection from step 4 then belongs to that account and may still have to be shared with the other users under *Workspace → Knowledge*.
 >
