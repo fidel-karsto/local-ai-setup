@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <!-- macOS-Pendant zum systemd-Timer (README §11):
-     tägliches Backup um 3:30 Uhr, nach dem RAG-Indexer.
+     tägliches Backup um 3:30 Uhr, nach dem Dokument-Sync.
 
      Bewusst ein LaunchAgent (Nutzer-Session), KEIN LaunchDaemon: Die
      docker-CLI erreicht den Daemon von Docker Desktop/OrbStack nur aus einer
@@ -35,7 +35,7 @@
         <key>BACKUP_DIR</key>
         <string>/opt/heim-ki/backups</string>
         <key>STATE_FILE</key>
-        <string>/opt/heim-ki/rag-index-state.json</string>
+        <string>/opt/heim-ki/doc-sync-state.json</string>
     </dict>
 
     <key>StartCalendarInterval</key>

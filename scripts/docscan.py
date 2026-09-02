@@ -1,4 +1,4 @@
-"""Dateiauswahl für den RAG-Indexer (siehe rag-indexer.py).
+"""Dateiauswahl für die Dokument-Synchronisation (siehe doc-sync.py).
 
 Bewusst ein eigenes Modul ohne schwere Importe: die Containment-Prüfung ist
 sicherheitskritisch und soll ohne installiertes venv testbar sein

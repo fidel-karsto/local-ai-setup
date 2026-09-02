@@ -23,6 +23,18 @@ Stand: 2026-08-28 · Bezug: `README.md` auf `main` (dcf46be)
 >   keinen GPU-Zugriff), Rest über `docker-compose.macos.yml`; launchd-Units
 >   (`scripts/launchd/`) als Pendant zu den systemd-Timern; NGINX/mkcert/WoL
 >   per Homebrew; Pfade unter `/opt/heim-ki` statt `/srv`
+> - 🔄 **Nachtrag: Variante B ist zurückgebaut** (Tutorial §7). An ihre Stelle
+>   tritt **Variante C** — genau der Weg (c) aus Fund F1 unten: Die Konvertierung
+>   läuft nativ auf dem Host (`scripts/docconvert.py`), und `scripts/doc-sync.py`
+>   lädt das Markdown über die Open-WebUI-API in eine normale Wissenssammlung.
+>   Damit gibt es nur noch einen Wissensspeicher; `#Sammlung` und Zitate
+>   funktionieren im Chat. Entfallen sind ChromaDB als eigener Dienst, der
+>   Indexer und das Such-Werkzeug. Nebenbei löst das ein Performance-Problem, das
+>   beim Schreiben der Phase 3 noch nicht bekannt war: Docker Desktop reicht auf
+>   Apple Silicon kein MPS durch (`Accelerator device: 'cpu'` im Docling-Log) —
+>   nativ war derselbe 188-seitige Scan in 181,5 s statt 509,8 s fertig.
+>   Der Rückbauweg für Bestandsinstallationen steht im Tutorial unter
+>   „Migration von Variante B".
 
 ---
 

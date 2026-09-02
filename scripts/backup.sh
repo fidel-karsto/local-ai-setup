@@ -3,21 +3,20 @@
 #
 # Sichert:
 #   - Docker-Volume open-webui-data   (Nutzer, Chats, Wissenssammlungen)
-#   - Docker-Volume chroma-data       (RAG-Index, Variante B)
-#   - Manifest des Indexers           (STATE_FILE, Default /srv/heim-ki/rag-index-state.json)
+#   - Manifest des Doc-Sync           (STATE_FILE, Default /srv/heim-ki/doc-sync-state.json)
 # Bewusst NICHT gesichert: ollama-data — Modelle sind jederzeit per
 # "ollama pull" wiederherstellbar und würden das Backup nur aufblähen.
 #
 # Konfiguration über Umgebungsvariablen (Default in Klammern):
 #   BACKUP_DIR (/srv/backups/heim-ki)         Zielverzeichnis (gern ein NAS-Mount)
 #   KEEP_DAYS  (14)                           Sicherungen älter als N Tage löschen
-#   STATE_FILE (/srv/heim-ki/rag-index-state.json)  Indexer-Manifest
+#   STATE_FILE (/srv/heim-ki/doc-sync-state.json)   Doc-Sync-Manifest
 #   ALPINE_IMAGE                              Tar-Helfer, auf Digest gepinnt
 set -euo pipefail
 
 BACKUP_DIR="${BACKUP_DIR:-/srv/backups/heim-ki}"
 KEEP_DAYS="${KEEP_DAYS:-14}"
-STATE_FILE="${STATE_FILE:-/srv/heim-ki/rag-index-state.json}"
+STATE_FILE="${STATE_FILE:-/srv/heim-ki/doc-sync-state.json}"
 
 # Auf einen Digest gepinnt wie die Images in .env.example: dieser Container
 # läuft als root und sieht beide Daten-Volumes. Es ist bewusst die
@@ -55,16 +54,15 @@ backup_volume() {
 }
 
 backup_volume open-webui-data
-backup_volume chroma-data
 
 if [ -f "$STATE_FILE" ]; then
-    cp "$STATE_FILE" "$BACKUP_DIR/rag-index-state-${STAMP}.json"
+    cp "$STATE_FILE" "$BACKUP_DIR/doc-sync-state-${STAMP}.json"
     echo "Gesichert: $STATE_FILE"
 fi
 
 # Alte Sicherungen aufräumen
 find "$BACKUP_DIR" -maxdepth 1 -type f \
-    \( -name '*.tar.gz' -o -name 'rag-index-state-*.json' \) \
+    \( -name '*.tar.gz' -o -name 'doc-sync-state-*.json' \) \
     -mtime +"$KEEP_DAYS" -delete
 
 echo "Fertig. Ablage: $BACKUP_DIR"

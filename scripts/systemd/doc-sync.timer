@@ -1,5 +1,5 @@
 [Unit]
-Description=Nächtlicher Lauf des RAG-Indexers (2 Uhr)
+Description=Nächtlicher Lauf des Dokument-Sync (2 Uhr)
 
 [Timer]
 OnCalendar=*-*-* 02:00:00

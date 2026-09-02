@@ -1,5 +1,5 @@
 [Unit]
-Description=Backup der Heim-KI-Daten (Open-WebUI- und Chroma-Volume)
+Description=Backup der Heim-KI-Daten (Open-WebUI-Volume und Doc-Sync-Manifest)
 Wants=docker.service
 After=docker.service
 
@@ -26,4 +26,4 @@ PrivateTmp=yes
 # Konfiguration bei Bedarf (Defaults siehe Skript-Kopf):
 # Environment=BACKUP_DIR=/srv/backups/heim-ki
 # Environment=KEEP_DAYS=14
-# Environment=STATE_FILE=/srv/heim-ki/rag-index-state.json
+# Environment=STATE_FILE=/srv/heim-ki/doc-sync-state.json

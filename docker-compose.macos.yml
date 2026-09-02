@@ -7,8 +7,8 @@
 #
 # Start:            cp .env.example .env   # anpassen, dann:
 #                   docker compose -f docker-compose.macos.yml up -d
-# Variante A (RAG): docker compose -f docker-compose.macos.yml --profile rag up -d
-# Variante B:       docker compose -f docker-compose.macos.yml --profile rag-batch up -d
+# Mit RAG-Extraktion (Docling):
+#                   docker compose -f docker-compose.macos.yml --profile rag up -d
 #
 # Der Port ist bewusst nur an 127.0.0.1 gebunden — der NGINX auf dem Host
 # (brew install nginx, Konfiguration aus nginx/) ist der Eingang aus dem LAN.
@@ -54,6 +54,9 @@ services:
       # 120 s und antwortet danach mit 504 — für gescannte PDFs mit OCR auf der
       # CPU (unter macOS immer, siehe oben) viel zu knapp:
       - DOCLING_SERVE_MAX_SYNC_WAIT=${DOCLING_SERVE_MAX_SYNC_WAIT:-3600}
+      # Thread-Zahl für Layout und OCR. Der Image-Default 4 lässt Leistung
+      # liegen, mehr als 6 kostet welche — Messwerte in der .env.example:
+      - OMP_NUM_THREADS=${DOCLING_OMP_THREADS:-6}
     healthcheck:
       test:
         [
@@ -65,36 +68,7 @@ services:
       retries: 5
       start_period: 120s
 
-  # Vektordatenbank für RAG-Variante B (README §7). Profil "rag-batch".
-  chroma:
-    image: ${CHROMA_IMAGE:-chromadb/chroma:1.5.9}
-    container_name: chroma
-    restart: unless-stopped
-    profiles: ["rag-batch"]
-    environment:
-      - ANONYMIZED_TELEMETRY=false
-    volumes:
-      - chroma-data:/data
-    ports:
-      # Host-Port über die .env umlegbar, falls 8000 schon belegt ist (ein
-      # anderer Container auf 0.0.0.0:8000 blockiert auch dieses 127.0.0.1!).
-      # Wird er geändert, muss CHROMA_URL des Indexers mitziehen — siehe
-      # scripts/launchd/de.heim-ki.rag-indexer.plist.
-      - "127.0.0.1:${CHROMA_HOST_PORT:-8000}:8000"
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "bash -c 'cat < /dev/null > /dev/tcp/localhost/8000' || curl -fsS http://localhost:8000/api/v2/heartbeat",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
 # Feste Volume-Namen wie in der Linux-Variante (Backup/Restore, README §11):
 volumes:
   open-webui-data:
     name: open-webui-data
-  chroma-data:
-    name: chroma-data

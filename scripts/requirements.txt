@@ -1,10 +1,15 @@
-# Abhängigkeiten des RAG-Indexers (scripts/rag-indexer.py)
+# Abhängigkeiten des Dokument-Sync (scripts/doc-sync.py)
 # Installation:
 #   python3 -m venv /srv/scripts/.venv
 #   /srv/scripts/.venv/bin/pip install -r requirements.txt
-# docling < 3: die systemd-Unit-Sandbox setzt HOME/HF_HOME/XDG_CACHE_HOME in
-# der Annahme, wohin docling seine Modelle cached — ein Major-Sprung könnte
-# das lautlos umwerfen.
+# docling < 3: ein Major-Sprung könnte die Pipeline-Optionen in
+# scripts/docconvert.py lautlos umwerfen.
 docling>=2.0,<3
-chromadb>=1.0,<2
-ollama>=0.4
+requests>=2.31
+# ocrmac ist auf macOS NICHT optional, auch wenn docling ohne es laeuft:
+# Doclings Automatik (ocr_engine=auto) waehlt Apple Vision nur, wenn das Paket
+# vorhanden ist, und faellt sonst still auf RapidOCR zurueck. Gemessen am
+# 188-Seiten-Scan: mit ocrmac 184,9 s, ohne 1058,0 s — Faktor 5,7, und damit
+# langsamer als der Docling-Container, den dieser Weg ersetzen soll.
+# Der Marker haelt das Paket von Linux fern, wo es nicht installierbar ist.
+ocrmac>=1.0; sys_platform == "darwin"
