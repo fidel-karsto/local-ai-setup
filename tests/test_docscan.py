@@ -1,4 +1,4 @@
-"""Tests für die Dateiauswahl des RAG-Indexers.
+"""Tests für die Dateiauswahl des Dokument-Sync (docscan, benutzt von doc-sync.py).
 
 Ausführen (kein pytest nötig):
     python3 -m unittest discover -s tests -v

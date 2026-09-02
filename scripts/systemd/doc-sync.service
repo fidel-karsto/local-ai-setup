@@ -51,6 +51,7 @@ Environment=XDG_CACHE_HOME=/srv/heim-ki/.cache
 # Environment=DOCS_DIR=/srv/dokumente
 # Environment=STATE_FILE=/srv/heim-ki/doc-sync-state.json
 # Environment=CACHE_DIR=/srv/heim-ki/cache
+# Environment=LOCK_FILE=/srv/heim-ki/doc-sync.lock
 # Environment=WEBUI_URL=http://127.0.0.1:3000
 # Environment=WEBUI_API_KEY_FILE=/srv/heim-ki/webui-api-key
 # Environment=KNOWLEDGE_NAME=Heim-Dokumente
