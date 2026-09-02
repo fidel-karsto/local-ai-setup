@@ -5,9 +5,16 @@ Content-Type des Multipart-Teils ist die tragende Annahme des Designs
 (text/markdown -> Open WebUI nimmt den TextLoader statt Docling), und den
 prüft man nur auf dem Draht zuverlässig.
 
+Braucht requests (über scripts/webui_client.py). Fehlt es, werden die Tests
+übersprungen statt mit einem Importfehler abzubrechen — sonst schlägt schon
+das dokumentierte Testkommando auf einem frischen Klon fehl. Geprüft wird
+gezielt auf requests, nicht per pauschalem except ImportError: ein echter
+Importfehler in webui_client.py selbst soll weiterhin auffallen.
+
 Ausführen:
     python3 -m unittest tests.test_webui_client -v
 """
+import importlib.util
 import json
 import sys
 import threading
@@ -17,7 +24,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import webui_client
+REQUESTS_VORHANDEN = importlib.util.find_spec("requests") is not None
+if REQUESTS_VORHANDEN:
+    import webui_client
 
 # Wird pro Test gesetzt: {(methode, pfad-ohne-query): [(status, rumpf), ...]}
 # Die Liste wird der Reihe nach abgearbeitet; der letzte Eintrag bleibt für
@@ -56,6 +65,10 @@ class Handler(BaseHTTPRequestHandler):
         self._antworte("POST")
 
 
+@unittest.skipUnless(
+    REQUESTS_VORHANDEN,
+    "requests ist nicht installiert (venv aus scripts/requirements.txt noetig)",
+)
 class TestWebUIClient(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

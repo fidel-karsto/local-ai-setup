@@ -4,9 +4,15 @@ Langsam: der erste Aufruf lädt Doclings Layout-Modelle. Deshalb hier nur ein
 einziger, minimaler Durchlauf — die Konvertierungsqualität ist Sache von
 docling, nicht dieses Repos.
 
+Braucht docling. Fehlt es (etwa im System-Python ohne das venv aus
+scripts/requirements.txt), werden die Tests übersprungen statt mit einem
+Importfehler abzubrechen — sonst schlägt schon das dokumentierte
+Testkommando auf einem frischen Klon fehl.
+
 Ausführen:
     python3 -m unittest tests.test_docconvert -v
 """
+import importlib.util
 import sys
 import tempfile
 import unittest
@@ -43,6 +49,10 @@ def minimal_pdf(text: str) -> bytes:
     return bytes(out)
 
 
+@unittest.skipUnless(
+    importlib.util.find_spec("docling") is not None,
+    "docling ist nicht installiert (venv aus scripts/requirements.txt noetig)",
+)
 class TestDocconvert(unittest.TestCase):
     def test_pdf_wird_zu_markdown(self):
         import docconvert
