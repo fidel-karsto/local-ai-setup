@@ -31,11 +31,11 @@ And, just as important, *declining* to answer what isn't in the documents — th
 |---|---|
 | [Ollama](https://ollama.com) | runs the language and embedding models locally |
 | [Open WebUI](https://docs.openwebui.com) | the chat interface, user accounts, knowledge collections |
-| [Docling](https://github.com/docling-project/docling-serve) | turns PDFs and scans into clean text (OCR included) |
-| [ChromaDB](https://docs.trychroma.com) | stores the document vectors |
+| [Docling](https://github.com/docling-project/docling) | turns PDFs and scans into clean text (OCR included) — in a container, or natively on the host for roughly 3x the speed |
+| Open WebUI's built-in vector store | stores the document vectors |
 | NGINX | the single entrance from the LAN, with HTTPS and access control |
 
-Two ways to do the retrieval are covered: let Open WebUI handle it end to end (simple, upload-driven), or run your own nightly indexer over a folder and expose the search as a chat tool (more moving parts, fully automatic).
+Two ways to get documents in are covered, and they end up in the same place: upload them through the browser and let Open WebUI handle the rest (simple), or have a nightly job sync a folder on the host, converting with Docling natively — about three times faster on Apple Silicon, because Docker there hands no GPU to the container.
 
 ## Repository layout
 
@@ -44,8 +44,7 @@ docker-compose.yml         Linux host (Ollama in a container, NVIDIA GPU)
 docker-compose.macos.yml   macOS host (Ollama native for Metal)
 .env.example               versions and tuning knobs
 nginx/                     HTTP and HTTPS configuration
-scripts/                   indexer, backup, Wake-on-LAN, systemd and launchd units
-tools/                     the document-search tool for Open WebUI
+scripts/                   document sync, backup, Wake-on-LAN, systemd and launchd units
 ```
 
 ## Getting started

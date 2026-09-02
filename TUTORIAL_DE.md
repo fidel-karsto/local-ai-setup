@@ -5,7 +5,7 @@
 > Basierend auf einem Setup von Matthias Kallenbach (LinkedIn-Post). Ziel: Eine ChatGPT-ähnliche Oberfläche für alle im Haushalt („Mama kann auch die Heim-KI benutzen"), bei der **keine Daten das eigene Netzwerk verlassen**.
 
 **Dieses Repo enthält neben dem Tutorial die fertigen Konfigurationsdateien:**
-[`docker-compose.yml`](docker-compose.yml) (Linux) · [`docker-compose.macos.yml`](docker-compose.macos.yml) (macOS) · [`.env.example`](.env.example) · [`nginx/`](nginx) (HTTP- und HTTPS-Konfiguration) · [`scripts/`](scripts) (RAG-Indexer, Backup, Wake-on-LAN, systemd- und launchd-Units) · [`tools/heim_docs_suche.py`](tools/heim_docs_suche.py) (Open-WebUI-Werkzeug)
+[`docker-compose.yml`](docker-compose.yml) (Linux) · [`docker-compose.macos.yml`](docker-compose.macos.yml) (macOS) · [`.env.example`](.env.example) · [`nginx/`](nginx) (HTTP- und HTTPS-Konfiguration) · [`scripts/`](scripts) (Dokument-Sync, Backup, Wake-on-LAN, systemd- und launchd-Units)
 
 Der Docker-Host kann ein **Linux-Rechner mit NVIDIA-GPU** oder ein **Apple-Silicon-Mac** sein — wo sich die Wege unterscheiden, steht es im jeweiligen Abschnitt dabei.
 
@@ -33,10 +33,10 @@ Das Setup besteht aus zwei Maschinen und mehreren Diensten:
                         │        │         ┌───────────────┐  │
                         │        │         │ RAG-Pipeline: │  │
                         │        │         │ Docling +     │  │
-                        │        │         │ ChromaDB +    │  │
-                        │        │         │ bge-m3        │  │
-                        │        │         │ (nächtlicher  │  │
-                        │        │         │  Batch-Job)   │  │
+                        │        │         │ bge-m3, Index │  │
+                        │        │         │ in Open WebUI │  │
+                        │        │         │ (Upload oder  │  │
+                        │        │         │  Nachtlauf)   │  │
                         │        │         └───────────────┘  │
                         │        │                            │
                         └────────┼────────────────────────────┘
@@ -56,8 +56,8 @@ Das Setup besteht aus zwei Maschinen und mehreren Diensten:
 | **[Ollama](https://ollama.com)** | Lokaler LLM-Server. Läuft auf dem Docker-Host (Linux: als Container mit CUDA-GPU; macOS: nativ mit Metal, siehe §3) **und** zusätzlich „on demand" auf der Workstation (Windows oder macOS). |
 | **[Open WebUI](https://github.com/open-webui/open-webui)** | ChatGPT-ähnliche Weboberfläche für Ollama — mit Nutzerverwaltung, Dokumenten-Upload und eingebautem RAG. |
 | **[bge-m3](https://ollama.com/library/bge-m3)** | Mehrsprachiges Embedding-Modell (BAAI). Wandelt Texte in Vektoren um — die Grundlage für die Dokumentensuche (RAG). Sehr gut für Deutsch geeignet. |
-| **[Docling](https://github.com/docling-project/docling)** | Open-Source-Tool von IBM Research: konvertiert PDF, DOCX, PPTX, HTML usw. in sauberes, strukturiertes Markdown/JSON — inkl. Tabellen und Layout-Erkennung. (Im Original-Post „Dockling" geschrieben — gemeint ist Docling.) |
-| **[ChromaDB](https://www.trychroma.com)** | Vektordatenbank. Speichert die von bge-m3 erzeugten Embeddings und liefert bei einer Frage die passenden Dokument-Schnipsel zurück. |
+| **[Docling](https://github.com/docling-project/docling)** | Open-Source-Tool von IBM Research: konvertiert PDF, DOCX, PPTX, HTML usw. in sauberes, strukturiertes Markdown/JSON — inkl. Tabellen und Layout-Erkennung. Läuft wahlweise als Container oder nativ auf dem Host; auf Apple Silicon ist der native Weg rund dreimal so schnell (§7). (Im Original-Post „Dockling" geschrieben — gemeint ist Docling.) |
+| **Vektorspeicher von Open WebUI** | Vektordatenbank. Speichert die von bge-m3 erzeugten Embeddings und liefert bei einer Frage die passenden Dokument-Schnipsel zurück. Sie steckt bereits in Open WebUI — kein eigener Dienst, kein eigener Container. |
 | **[NGINX](https://nginx.org)** | Reverse Proxy auf dem Docker-Host. Macht aus `http://192.168.x.y:11434` schöne, sprechende Namen wie `http://ollama.heim.lan` — „ohne komische Ports". |
 
 **RAG** (Retrieval-Augmented Generation) bedeutet: Bevor das Sprachmodell antwortet, sucht das System in den eigenen Dokumenten nach relevanten Passagen und gibt sie dem Modell als Kontext mit. So kann die Heim-KI Fragen zu den eigenen PDFs, Verträgen, Anleitungen etc. beantworten.
@@ -510,13 +510,20 @@ Kommt hier die Modellliste der Workstation, passt alles. Ein Verbindungsfehler h
 
 ---
 
-## 7. RAG einrichten: Docling + ChromaDB + bge-m3
+## 7. RAG einrichten: Docling + bge-m3 + Open WebUI
 
-Jetzt der Teil, der „nachts alles durchknödelt": Dokumente werden mit Docling in sauberen Text konvertiert, mit bge-m3 in Vektoren verwandelt und in ChromaDB abgelegt.
+Jetzt der Teil, der „nachts alles durchknödelt": Dokumente werden mit Docling in sauberen Text konvertiert, mit bge-m3 in Vektoren verwandelt und im Vektorspeicher von Open WebUI abgelegt.
+
+Dorthin führen zwei Wege, und sie schließen sich nicht aus:
+
+- **Variante A** — Dokumente über den Browser hochladen, Docling läuft als Container. Der einfache Weg, und für die meisten der richtige.
+- **Variante C** — ein Ordner auf dem Host wird nachts automatisch abgeglichen, die Konvertierung läuft dabei *nativ* auf dem Host. Das Ergebnis landet in derselben Art von Wissenssammlung wie bei Variante A.
+
+Beide enden also im selben Speicher. Das ist keine Selbstverständlichkeit: Ein früherer Stand dieses Tutorials hatte hier eine **Variante B** mit eigener Vektordatenbank und einem Such-Werkzeug im Chat — zwei getrennte Wissensspeicher, von denen der eine `#Sammlung` und Zitate konnte und der andere nicht. Sie ist ersetzt worden; wer sie gebaut hat, findet den Rückbau am Ende dieses Abschnitts unter „Migration von Variante B".
 
 ### Variante A (empfohlen): Open WebUI erledigt das RAG
 
-Open WebUI bringt die komplette RAG-Pipeline bereits mit — ChromaDB ist die eingebaute Standard-Vektordatenbank, und Docling wird als Extraktions-Engine offiziell unterstützt.
+Open WebUI bringt die komplette RAG-Pipeline bereits mit — die Vektordatenbank ist eingebaut, und Docling wird als Extraktions-Engine offiziell unterstützt.
 
 **1. Docling-Container starten:** Der Docling-Server ist in beiden Compose-Dateien dieses Repos bereits enthalten — als Compose-*Profil* `rag`, damit das Basis-Setup schlank bleibt:
 
@@ -531,6 +538,20 @@ docker compose -f docker-compose.macos.yml --profile rag up -d
 Ein Port-Mapping braucht Docling nicht: Open WebUI erreicht den Container über das Compose-Netz direkt unter `http://docling:5001`. (Standardmäßig läuft das CPU-Image; wer die GPU für schnellere OCR mitnutzen will, trägt in der `.env` die CUDA-Variante ein — siehe [`.env.example`](.env.example). Achtung: Docling ist bei OCR-lastigen PDFs RAM-hungrig.)
 
 > **Timeout bei großen Scans:** Open WebUI konvertiert *synchron* (`POST /v1/convert/file`) und wartet ohne eigenes Zeitlimit — abgebrochen wird also von docling-serve, dessen `max_sync_wait` per Default bei **120 Sekunden** liegt. Im Log sieht das so aus: `"POST /v1/convert/file HTTP/1.1" 504`. Ein gescanntes 190-Seiten-Heft braucht mit OCR auf der CPU aber eher eine halbe bis ganze Stunde. Die Compose-Dateien setzen deshalb `DOCLING_SERVE_MAX_SYNC_WAIT` auf 3600 Sekunden; über die `.env` lässt sich der Wert anpassen.
+
+**Die Thread-Zahl des Containers ist einen Blick wert.** Docling parallelisiert Layout-Erkennung und OCR über OpenMP; wie viele Threads es dafür aufmacht, sagt ihm `OMP_NUM_THREADS`. Beide Compose-Dateien füttern das aus `DOCLING_OMP_THREADS` in der [`.env`](.env.example), Default **6**. Der Wert ist gemessen, nicht geraten — dasselbe gescannte 188-Seiten-Heft (37,7 MB, keine Textebene) fünfmal durch denselben Container:
+
+| `DOCLING_OMP_THREADS` | Dauer |
+|---|---|
+| 2 | 766,4 s |
+| 4 | 509,8 s |
+| 6 | **346,0 s** |
+| 8 | 419,3 s |
+| 12 | 656,8 s |
+
+Die Ausgabe war in allen fünf Läufen byte-identisch (815.904 Zeichen) — es geht hier also ausschließlich um Zeit, nicht um Qualität. Und mehr ist deutlich nicht besser: Ab 8 Threads geht es wieder bergauf, weil ONNX Runtime und Torch zusätzlich ihre eigenen Thread-Pools aufmachen und sich die Kerne dann gegenseitig überbuchen. 12 Threads sind fast doppelt so langsam wie 6.
+
+> **Wer nachmisst, misst an einem großen Dokument.** Die Zahlen oben stammen von einem Mac Studio (M4 Max); auf anderer Hardware liegt das Optimum woanders. Aber Vorsicht bei der Messung selbst: an einem 8-Seiten-PDF war ausgerechnet der schlechteste dieser Werte der schnellste — bei kurzen Läufen misst man das Laden der Modelle, nicht die Konvertierung. Ein Testdokument, das mindestens ein paar Minuten braucht, ist Pflicht.
 
 **2. Open WebUI konfigurieren** unter *Admin-Einstellungen → Dokumente*:
 - **Inhaltsextraktion / Content Extraction Engine:** `Docling` mit URL `http://docling:5001`
@@ -565,43 +586,48 @@ Mit `64` und `4` werden daraus ~16 Batch-Anfragen, von denen höchstens vier par
 - Open WebUI RAG-Doku: https://docs.openwebui.com/features/rag
 - Docling Serve: https://github.com/docling-project/docling-serve
 
-### Variante B: Eigene Pipeline als nächtlicher Batch-Job (mit Suche als Open-WebUI-Tool)
+### Variante C: Nächtlicher Ordner-Abgleich mit nativer Konvertierung
 
-Wer es wie im Post als eigenständigen Nachtjob bauen will (z. B. um einen ganzen Ordner automatisch zu indexieren), bekommt hier die komplette Kette — inklusive des Teils, der im Post fehlte: der **Anbindung an die Chats**. Die Architektur:
+Wer einen Ordner auf dem Host einfach vollkippen und den Rest der Maschine überlassen will, bekommt hier die zweite Hälfte. Das Ziel ist dasselbe wie bei Variante A — nur der Weg dorthin ist ein anderer:
 
 ```
-/srv/dokumente ──► rag-indexer.py ──► ChromaDB-Server ◄── Open-WebUI-Tool
-                   (Host, nachts       (Container,         "Heim-Dokumente
-                    per systemd-        Profil "rag")       durchsuchen"
-                    Timer)                                  (im Chat)
+/srv/dokumente ──► doc-sync.py ──► Open-WebUI-API ──► Wissenssammlung
+                   (Host, nachts    (/api/v1/files      "Heim-Dokumente"
+                    per Timer;       + /knowledge)       — im Chat als
+                    Docling nativ)                        #Heim-Dokumente)
 ```
 
-**1. ChromaDB-Server starten:** Der Container ist in beiden Compose-Dateien enthalten — im eigenen Profil `rag-batch`, denn Variante B braucht Chroma, aber nicht den Docling-Server aus Variante A:
+Am Ende steht eine ganz normale Wissenssammlung: dieselbe, die man auch von Hand hätte befüllen können. Chunking, Embedding und Zitate erledigt Open WebUI genau wie bei Variante A. Es gibt keinen zweiten Wissensspeicher und kein Werkzeug, das man im Chat erst zuschalten müsste.
 
-```bash
-# Linux:
-docker compose --profile rag-batch up -d
+**Warum nativ statt im Container?** Weil Docker Desktop auf Apple Silicon die GPU nicht in den Container durchreicht. Im Log des Docling-Containers steht deshalb dauerhaft:
 
-# macOS:
-docker compose -f docker-compose.macos.yml --profile rag-batch up -d
+```
+Accelerator device: 'cpu'
 ```
 
-Der Indexer auf dem Host erreicht ihn unter `127.0.0.1:8000`, das Open-WebUI-Tool über das Compose-Netz unter `http://chroma:8000`.
+Nativ auf demselben Mac sieht Docling die Hardware dagegen und wählt von selbst den schnellen Weg. Am selben gescannten 188-Seiten-Heft gemessen:
 
-> **Port 8000 schon belegt?** Dann bricht der Start mit `Bind for 0.0.0.0:8000 failed: port is already allocated` ab. Meist ist ein Container aus einem *anderen* Projekt schuld: bindet der auf `0.0.0.0:8000`, ist damit auch das hiesige `127.0.0.1:8000` blockiert. Wer den Übeltäter sucht: `lsof -nP -iTCP:8000 -sTCP:LISTEN` und `docker ps --format '{{.Names}}\t{{.Ports}}'`. Umlegen lässt sich der Host-Port in der `.env`:
->
-> ```bash
-> CHROMA_HOST_PORT=8001
-> ```
->
-> Das betrifft **nur** den Indexer auf dem Host; das Open-WebUI-Werkzeug geht über das Compose-Netz und bleibt bei `http://chroma:8000`. Dafür muss `CHROMA_URL` des Indexers mitziehen — in der systemd-Unit bzw. der launchd-plist (Schritt 3) und beim Testlauf unten: `CHROMA_URL=http://127.0.0.1:8001`. Bleibt das aus, läuft der Nachtjob ins Leere.
+| Weg | Dauer | Zeichen |
+|---|---|---|
+| Container, 4 Threads (der Stand vor diesem Umbau) | 509,8 s | 815.904 |
+| Container, 6 Threads (Optimum, siehe Variante A) | 346,0 s | 815.904 |
+| **Nativ (MPS + Apple Vision)** | **181,5 s** | 841.999 |
 
-**2. Indexer einrichten** ([`scripts/rag-indexer.py`](scripts/rag-indexer.py)) — mit eigenem venv, damit der Zeitplan-Aufruf dieselbe Umgebung nutzt wie die Installation. Unter Linux liegt alles unter `/srv`, unter macOS unter `/opt/heim-ki` (auf dem Mac ist `/srv` wegen des versiegelten Systemvolumes nicht anlegbar):
+> **Der häufigste Irrtum an dieser Stelle:** Die Thread-Kurve aus Variante A gilt **nur für den Container**. Nativ ist die Thread-Zahl schlicht wirkungslos — 4, 6, 8 und 12 Threads ergaben 180,2 / 180,2 / 181,4 / 180,8 Sekunden, eine Spanne von 0,7 %. Der native Weg hängt an MPS und Apple Vision, nicht an CPU-Threads. Deshalb setzt weder die systemd-Unit noch die launchd-plist ein `OMP_NUM_THREADS`, und wer dort eine 6 einträgt, gewinnt nichts. `DOCLING_OMP_THREADS` in der `.env` betrifft ausschließlich den Container aus Variante A.
+
+**Unter Linux fällt der Gewinn kleiner aus.** Dort reicht Docker die NVIDIA-Karte sehr wohl in den Container durch: Mit dem CUDA-Image `docling-serve-cu124` (in der [`.env`](.env.example) einstellbar) rechnet auch der Container auf der GPU. Variante C bleibt dort trotzdem sinnvoll — wegen des automatischen Ordner-Abgleichs —, aber der Zeitvorsprung gegenüber Variante A ist bei weitem nicht so groß wie in der Tabelle oben.
+
+**Und was Variante C *nicht* löst:** Sie macht das Warten im Browser nicht kürzer. Open WebUI entkoppelt Upload und Verarbeitung längst von sich aus — der Upload legt die Datei ab und startet einen `BackgroundTask`, die Datei steht bis zum Ende auf `pending`, und man darf den Tab in Ruhe zumachen. Wer also nur den hängenden Ladebalken loswerden will, braucht Variante C nicht. Was C bringt, ist Rechenzeit und ein Ordner, der sich von selbst abgleicht — nicht Entkopplung. Es lohnt, das vor dem Nachbauen ehrlich zu sortieren.
+
+**Zur OCR-Qualität:** Apple Vision und RapidOCR wurden am selben Dokument verglichen. Beide verlesen sich — bei Umlauten, bei Ziffern, in Tabellenzellen —, nur an unterschiedlichen Stellen; ein systematischer Rückstand des einen gegenüber dem anderen war nicht zu erkennen. Deshalb ist in [`scripts/docconvert.py`](scripts/docconvert.py) auch kein OCR-Motor fest verdrahtet: Docling entscheidet selbst (`device='auto'` löst zu `mps` auf, `ocr_engine=auto` wählt `ocrmac`, also Apple Vision). Aus demselben Grund steht dort keine plattformabhängige Fallunterscheidung im Code: Dieselbe Automatik greift unter Linux ebenso, wählt dort aber CUDA und den dort verfügbaren OCR-Motor.
+
+**1. Ordner, Skripte und venv anlegen** — mit eigenem venv, damit der nächtliche Aufruf dieselbe Umgebung nutzt wie die Installation. Unter Linux liegt alles unter `/srv`, unter macOS unter `/opt/heim-ki` (auf dem Mac ist `/srv` wegen des versiegelten Systemvolumes nicht anlegbar):
 
 ```bash
 # Linux:
 sudo mkdir -p /srv/scripts /srv/dokumente
-sudo cp scripts/rag-indexer.py scripts/docscan.py scripts/requirements.txt /srv/scripts/
+sudo cp scripts/doc-sync.py scripts/docconvert.py scripts/webui_client.py \
+        scripts/docscan.py scripts/requirements.txt /srv/scripts/
 
 # Systemaccount für den nächtlichen Lauf:
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin heim-ki
@@ -622,16 +648,6 @@ sudo chown -R "$USER":heim-ki /srv/dokumente
 sudo chmod 2750 /srv/dokumente
 ```
 
-Dokumente vorher nach `/srv/dokumente` legen. `scripts/docscan.py` ist neu und **muss** mitkopiert werden, sonst scheitert der Import in `rag-indexer.py`. Einen echten Testlauf gibt es weiter unten unter „3. Nächtlich laufen lassen" — dort startet er als der `heim-ki`-Account über den systemd-Dienst, nicht per direktem Python-Aufruf.
-
-**Nur für Bestandsinstallationen:** Wer `/srv/scripts` schon vor dieser Härtung eingerichtet hatte, muss das Indexer-Manifest umziehen — sonst indexiert der nächste Lauf alle Dokumente noch einmal komplett neu:
-
-```bash
-sudo install -d -o heim-ki -g heim-ki -m 0750 /srv/heim-ki
-sudo mv /srv/rag-index-state.json /srv/heim-ki/
-sudo chown heim-ki:heim-ki /srv/heim-ki/rag-index-state.json
-```
-
 ```bash
 # macOS (Pfade analog, plus Log- und Backup-Verzeichnis für die launchd-Jobs;
 # alles gehört danach dem eingeloggten Nutzer, denn die Jobs laufen als
@@ -641,71 +657,154 @@ sudo chown heim-ki:heim-ki /srv/heim-ki/rag-index-state.json
 # also unproblematisch, wo es unter Linux ein Fehler wäre):
 sudo mkdir -p /opt/heim-ki/scripts /opt/heim-ki/dokumente /opt/heim-ki/logs /opt/heim-ki/backups
 sudo chown -R "$USER" /opt/heim-ki
-cp scripts/rag-indexer.py scripts/docscan.py scripts/requirements.txt /opt/heim-ki/scripts/
+cp scripts/doc-sync.py scripts/docconvert.py scripts/webui_client.py \
+   scripts/docscan.py scripts/requirements.txt /opt/heim-ki/scripts/
 python3 -m venv /opt/heim-ki/scripts/.venv
 /opt/heim-ki/scripts/.venv/bin/pip install -r /opt/heim-ki/scripts/requirements.txt
-
-# Testlauf (Dokumente vorher nach /opt/heim-ki/dokumente legen):
-DOCS_DIR=/opt/heim-ki/dokumente STATE_FILE=/opt/heim-ki/rag-index-state.json \
-  /opt/heim-ki/scripts/.venv/bin/python /opt/heim-ki/scripts/rag-indexer.py
 ```
 
-Das Skript ist auf Dauerbetrieb ausgelegt: Es überspringt unveränderte Dateien (SHA-256-Manifest, Pfad per `STATE_FILE`), entfernt die Chunks gelöschter oder geänderter Dateien, bettet Chunks *mit* Überschriften-Kontext ein (`chunker.contextualize`) und bricht bei einer kaputten Datei nicht den ganzen Lauf ab. Pfade und URLs sind per Umgebungsvariablen konfigurierbar (siehe Skript-Kopf).
+**Alle vier Python-Dateien müssen mit.** `doc-sync.py` ist nur die Ablaufsteuerung; es importiert `docscan` (Dateiauswahl samt Symlink-Schutz), `docconvert` (die Docling-Konvertierung) und `webui_client` (die REST-Aufrufe). Fehlt eines davon, bricht der Lauf beim Import ab. `requirements.txt` zieht `docling>=2.0,<3` und `requests>=2.31` — die Obergrenze bei docling ist Absicht: Ein Major-Sprung könnte die Pipeline-Optionen in `docconvert.py` lautlos umwerfen, und das würde man erst an schlechteren Konvertaten merken.
 
-**3. Nächtlich laufen lassen:**
-
-*Linux* — als systemd-Timer ([`scripts/systemd/`](scripts/systemd/)); der holt dank `Persistent=true` auch verpasste Läufe nach, und die Logs landen im journald:
+**2. API-Key in Open WebUI erzeugen:** `doc-sync.py` spricht mit Open WebUI über dessen REST-API und braucht dafür einen persönlichen Schlüssel. In der Oberfläche unter *Einstellungen → Konto → API-Schlüssel* einen erzeugen und in die Datei schreiben, die das Skript liest (`WEBUI_API_KEY_FILE`):
 
 ```bash
-sudo cp scripts/systemd/rag-indexer.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload
+# Linux — die Datei gehört dem Dienst-Account und sonst niemandem:
+sudo install -o heim-ki -g heim-ki -m 600 /dev/null /srv/heim-ki/webui-api-key
+sudo -u heim-ki tee /srv/heim-ki/webui-api-key >/dev/null <<< 'sk-…'
 
-# Unit gegenprüfen, bevor sie scharf geschaltet wird — meldet Tippfehler
-# und Direktiven, die diese systemd-Version nicht kennt:
-systemd-analyze verify /etc/systemd/system/rag-indexer.service
-
-sudo systemctl enable --now rag-indexer.timer
-
-# Logs ansehen:
-journalctl -u rag-indexer.service
+# macOS:
+printf '%s' 'sk-…' > /opt/heim-ki/webui-api-key
+chmod 600 /opt/heim-ki/webui-api-key
 ```
 
-**Testlauf:** `sudo systemctl start rag-indexer.service`, danach `journalctl -u rag-indexer.service -n 50` — das startet den Dienst inklusive aller Sandbox-Direktiven aus der Unit (`ProtectSystem=strict` usw.) und zeigt deshalb auch Fehler, die genau diese Sandbox verursacht; ein direkter Aufruf per `sudo -u heim-ki /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py` umgeht die Unit komplett und würde solche Fehler nicht zeigen. Nebeneffekt von `PrivateDevices=yes` in der Sandbox: der Dienst sieht kein `/dev/nvidia*` mehr, `torch.cuda.is_available()` liefert `False`, und Docling nutzt für Layout/OCR nur noch die CPU — je nach Dokumentenbestand ein spürbar längerer Nachtlauf (Details und Abhilfe siehe Kommentar in der Unit-Datei).
+Das `chmod 600` ist kein Schmuck: Der Schlüssel liegt im Klartext auf der Platte und trägt die Rechte des Kontos, mit dem er erzeugt wurde. Wer ihn lesen kann, kann in Open WebUI alles, was dieser Nutzer kann — Chats inklusive. (Fehlt der Menüpunkt unter *Konto* ganz, ist die API-Schlüssel-Funktion in den *Admin-Einstellungen* global abgeschaltet und muss dort erst freigegeben werden.)
 
-Beim allerersten Lauf lädt Docling seine Layout-/Tabellenmodelle (und je nach installierter Version RapidOCR- oder EasyOCR-Modelle) über HuggingFace nach — das dauert spürbar. Dank `HOME`, `HF_HOME` und `XDG_CACHE_HOME` in der Unit landen sie unterhalb von `/srv/heim-ki`, nicht in einem für den Systemaccount (`--no-create-home`) gar nicht existierenden `$HOME` — deshalb muss `/srv/heim-ki` bereits `heim-ki` gehören (oben mit `install -d -o heim-ki -g heim-ki` erledigt). Bekannte Einschränkung: Sollte eine künftige docling-Version stattdessen paketrelativ ins venv schreiben wollen, scheitert das unter `ProtectSystem=strict` trotzdem — das ist beim ersten Lauf mit der tatsächlich installierten docling-Version zu prüfen.
+**3. Wissenssammlung anlegen:** Das Skript sucht die Sammlung **über ihren Namen** — `KNOWLEDGE_NAME`, Default `Heim-Dokumente`. Entweder legt man sie vorher in der Oberfläche unter *Arbeitsbereich → Wissen* an, oder man überlässt das dem ersten Lauf mit `--create` (Schritt 4).
 
-(Wer lieber Cron mag: `0 2 * * * sudo -u heim-ki /srv/scripts/.venv/bin/python /srv/scripts/rag-indexer.py >> /var/log/rag-indexer.log 2>&1` — läuft dann allerdings ohne die systemd-Sandbox aus der `.service`-Datei.)
+Findet das Skript die Sammlung nicht und fehlt `--create`, bricht es ab:
 
-*macOS* — als launchd-Job ([`scripts/launchd/`](scripts/launchd/)); die Pfade in der plist passen zu `/opt/heim-ki`. Der Job läuft bewusst als **LaunchAgent in der Nutzer-Session** (nicht als root-Daemon), denn er braucht um 2:00 Uhr das native Ollama und den Chroma-Container — und beide existieren nur in einer angemeldeten Session mit laufendem Docker Desktop/OrbStack (→ §3, „Unbeaufsichtigter Betrieb": automatische Anmeldung + „Start at login" einrichten, sonst läuft der Index nachts ins Leere):
+```
+FEHLER: Sammlung 'Heim-Dokumente' existiert nicht. Mit --create anlegen — oder KNOWLEDGE_NAME auf Tippfehler prüfen.
+```
+
+Das ist Absicht und der einzige Grund, warum `--create` überhaupt existiert. Würde das Skript stillschweigend anlegen, was es nicht findet, dann erzeugte ein Tippfehler im Namen — oder ein `KNOWLEDGE_NAME`, das in der Unit anders steht als in der plist — beim nächsten Lauf klaglos eine zweite, leere Sammlung. Im Chat sähe man davon nichts: `#Heim-Dokumente` fände weiterhin die alte, während der Nachtjob fleißig die neue befüllt. Ein Abbruch mit klarer Meldung ist da die freundlichere Variante.
+
+**4. Erster Lauf von Hand.** Dokumente vorher nach `/srv/dokumente` bzw. `/opt/heim-ki/dokumente` legen.
+
+```bash
+# Linux — als der Dienst-Account, damit Manifest und Cache gleich die
+# richtigen Rechte bekommen. Die Pfade sind hier die Defaults aus
+# doc-sync.py, es braucht also keine Umgebungsvariablen:
+sudo -u heim-ki /srv/scripts/.venv/bin/python /srv/scripts/doc-sync.py --create
+
+# macOS — die Defaults im Skript sind die Linux-Pfade, hier also alle setzen.
+# Genau diese Werte stehen später auch in der plist:
+DOCS_DIR=/opt/heim-ki/dokumente \
+STATE_FILE=/opt/heim-ki/doc-sync-state.json \
+CACHE_DIR=/opt/heim-ki/cache \
+LOCK_FILE=/opt/heim-ki/doc-sync.lock \
+WEBUI_URL=http://127.0.0.1:3000 \
+WEBUI_API_KEY_FILE=/opt/heim-ki/webui-api-key \
+KNOWLEDGE_NAME=Heim-Dokumente \
+  /opt/heim-ki/scripts/.venv/bin/python /opt/heim-ki/scripts/doc-sync.py --create
+```
+
+Der allererste Lauf lädt zusätzlich Doclings Layout- und Tabellenmodelle über den HuggingFace Hub nach — das dauert spürbar und passiert nur einmal. (Die vollständige Liste der Umgebungsvariablen samt Defaults steht im Kopf von [`scripts/doc-sync.py`](scripts/doc-sync.py); nachlesen ist verlässlicher als raten.)
+
+Was das Skript dabei tut, und warum:
+
+- Es merkt sich für jede Quelldatei deren SHA-256 in `STATE_FILE`. Unveränderte Dateien überspringt es — der teure Schritt ist die Konvertierung, nicht der Upload. (Open WebUI bringt zwar einen eigenen Abgleich mit, der vergleicht aber die Prüfsumme des *hochgeladenen Markdowns* — die Frage „hat sich die Quelldatei geändert?" beantwortet er also erst, nachdem konvertiert wurde — und genau das ist der teure Schritt.)
+- Das Manifest wird nach *jeder* Datei atomar geschrieben (erst Temp-Datei, dann `os.replace`). Ein Abbruch mittendrin kostet damit höchstens die eine gerade laufende Datei, nicht den ganzen Nachtlauf.
+- Gelöschte Dateien werden aus der Sammlung entfernt, geänderte ersetzt.
+- Der Zielname enthält den ganzen Relativpfad: aus `steuer/2025.pdf` wird `steuer_2025.md`. Gleichnamige Dateien in verschiedenen Unterordnern überschreiben sich dadurch nicht gegenseitig.
+- Das fertige Markdown landet zusätzlich unter `CACHE_DIR`, benannt nach dem Hash der Quelle. Wer die Sammlung neu aufbaut, zahlt die Konvertierung nicht ein zweites Mal. **`CACHE_DIR` darf dafür nicht innerhalb von `DOCS_DIR` liegen** — die Konvertate sind Markdown, und Markdown liest der nächste Scan wieder als Quelldatei ein. Das Skript prüft das und bricht mit einer klaren Meldung ab, statt sich selbst zu indexieren.
+- Ein `flock` auf `LOCK_FILE` verhindert, dass ein Handaufruf und der Nachtlauf gleichzeitig schreiben.
+- Eine kaputte Datei bricht den Lauf nicht ab; sie wird protokolliert, und der Exit-Code ist am Ende ungleich 0.
+
+**5. Nächtlich laufen lassen:**
+
+*Linux* — als systemd-Timer ([`scripts/systemd/`](scripts/systemd/)), 2:00 Uhr; dank `Persistent=true` werden verpasste Läufe nachgeholt, und die Logs landen im journald:
+
+```bash
+sudo cp scripts/systemd/doc-sync.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# Unit gegenprüfen, bevor sie scharf geschaltet wird — meldet Tippfehler und
+# Direktiven, die diese systemd-Version nicht kennt. Diesen Schritt bitte
+# wirklich ausführen: die Unit in diesem Repo ist auf einem macOS-Rechner
+# entstanden und konnte dort nicht gegen ein echtes systemd geprüft werden.
+systemd-analyze verify /etc/systemd/system/doc-sync.service
+
+sudo systemctl enable --now doc-sync.timer
+
+# Logs ansehen:
+journalctl -u doc-sync.service
+```
+
+**Testlauf:** `sudo systemctl start doc-sync.service`, danach `journalctl -u doc-sync.service -n 50`. Bewusst über die Unit und nicht per direktem Python-Aufruf: Nur so laufen die Sandbox-Direktiven (`ProtectSystem=strict` usw.) mit, und nur so zeigen sich Fehler, die genau diese Sandbox verursacht. Ein `sudo -u heim-ki /srv/scripts/.venv/bin/python …` umgeht die Unit komplett und sähe solche Fehler nie.
+
+> **Warum die Unit kein `PrivateDevices=yes` setzt.** Die Vorgänger-Unit hatte es. Die Direktive blendet `/dev/nvidia*` aus, `torch.cuda.is_available()` liefert dann `False`, und Docling rechnet Layout und OCR auf der CPU — also genau der Zustand, den dieser Umbau abschaffen soll. Die Zeile fehlt deshalb absichtlich und ist in der `.service`-Datei auch so kommentiert. Wer auf einem Host ohne GPU arbeitet oder die Härtung höher gewichtet als die Laufzeit, kann sie ergänzen und nimmt dafür einen deutlich längeren Nachtlauf in Kauf.
+
+Beim allerersten Lauf lädt Docling seine Modelle über HuggingFace nach. Der Dienst läuft als `heim-ki` (`--no-create-home`), hat also gar kein `$HOME`, und `ProtectHome=yes` blendet `/home` ohnehin aus — die Unit lenkt `HOME`, `HF_HOME` und `XDG_CACHE_HOME` deshalb aktiv unter `/srv/heim-ki` um. Das Verzeichnis muss existieren und `heim-ki` gehören (oben mit `install -d -o heim-ki -g heim-ki` erledigt), sonst startet die Unit nicht. Bekannte Einschränkung: Sollte eine künftige docling-Version stattdessen paketrelativ ins venv schreiben wollen, scheitert das unter `ProtectSystem=strict` trotzdem — das ist beim ersten Lauf mit der tatsächlich installierten Version zu prüfen.
+
+*macOS* — als LaunchAgent ([`scripts/launchd/de.heim-ki.doc-sync.plist`](scripts/launchd/de.heim-ki.doc-sync.plist)); die `/opt/heim-ki`-Pfade stehen als `EnvironmentVariables` bereits in der plist:
 
 ```bash
 mkdir -p ~/Library/LaunchAgents
-cp scripts/launchd/de.heim-ki.rag-indexer.plist ~/Library/LaunchAgents/
-launchctl load -w ~/Library/LaunchAgents/de.heim-ki.rag-indexer.plist
+cp scripts/launchd/de.heim-ki.doc-sync.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/de.heim-ki.doc-sync.plist
 
 # Logs ansehen:
-tail -f /opt/heim-ki/logs/rag-indexer.log
+tail -f /opt/heim-ki/logs/doc-sync.log
 ```
+
+Bewusst ein **LaunchAgent in der Nutzer-Session**, kein root-Daemon: Der Sync braucht um 2:00 Uhr Open WebUI im Container (Docker Desktop/OrbStack laufen nur in einer angemeldeten Session) — und er braucht die GPU, die einem Daemon ohne Session nicht zur Verfügung steht. Letzteres wiegt hier besonders schwer: Ohne MPS ist der ganze Grund für Variante C dahin, und man merkt es nur an der Laufzeit. Also §3, „Unbeaufsichtigter Betrieb" einrichten (automatische Anmeldung, „Start at login", `pmset`), sonst läuft der Nachtjob ins Leere.
 
 (launchd holt einen verpassten Lauf nach, wenn der Mac zur geplanten Zeit nur geschlafen hat — nach einem kompletten Shutdown oder ohne angemeldete Session allerdings nicht.)
 
-**4. Suche in Open WebUI anbinden:** Den Inhalt von [`tools/heim_docs_suche.py`](tools/heim_docs_suche.py) in Open WebUI unter *Arbeitsbereich → Werkzeuge → +* als neues Werkzeug einfügen und speichern. Anschließend das Werkzeug beim gewünschten Modell aktivieren (*Admin-Einstellungen → Modelle → Modell bearbeiten → Werkzeuge*) oder im Chat über das ⊕-Menü zuschalten. URLs, Collection und Trefferanzahl lassen sich über die *Ventile* (Valves) des Werkzeugs anpassen.
+**6. Benutzen:** Im Chat die Sammlung mit `#Heim-Dokumente` einbinden und fragen („Was steht in meinem Mietvertrag zur Kündigungsfrist?"). Die Antwort kommt mit Quellenangaben — die Dokumente liegen ja in einer ganz gewöhnlichen Wissenssammlung, und für Open WebUI ist nicht zu unterscheiden, ob sie über den Browser oder über den Nachtjob hineingekommen sind.
 
-**5. Benutzen:** Im Chat einfach nach Inhalten der eigenen Dokumente fragen („Was steht in meinem Mietvertrag zur Kündigungsfrist?") — das Modell ruft das Werkzeug auf, das die passenden Textstellen samt Quellenangabe aus dem Nachtindex holt.
-
-> **Hinweis:** Variante B nutzt bewusst *nicht* Docling-Serve aus Variante A, sondern die Docling-Python-Bibliothek direkt im Indexer — deshalb das getrennte Compose-Profil: `rag` startet Docling (Variante A), `rag-batch` startet Chroma (Variante B). Beide Varianten lassen sich auch parallel betreiben.
+> **Hinweis:** Variante C nutzt *nicht* den Docling-Container aus Variante A, sondern die Docling-Python-Bibliothek direkt auf dem Host — das Compose-Profil `rag` braucht sie also nicht. Beide Varianten lassen sich trotzdem parallel betreiben: Sie schreiben in denselben Speicher. Man kann dieselbe Sammlung mischen oder dem Nachtjob über `KNOWLEDGE_NAME` eine eigene geben.
 
 **Quellen:**
 - Docling Doku: https://docling-project.github.io/docling/
-- ChromaDB Doku: https://docs.trychroma.com
+- Open WebUI RAG-Doku: https://docs.openwebui.com/features/rag
 - Ollama Embeddings: https://docs.ollama.com/api
+
+### Migration von Variante B
+
+Wer den früheren Stand dieses Tutorials gebaut hat — eigener Indexer, eigene ChromaDB, Such-Werkzeug im Chat —, räumt so auf. **Zuerst Variante C einrichten und einmal erfolgreich durchlaufen lassen**; danach ist der alte Index entbehrlich.
+
+```bash
+# Linux:
+sudo systemctl disable --now rag-indexer.timer
+sudo rm -f /etc/systemd/system/rag-indexer.{service,timer}
+sudo systemctl daemon-reload
+
+# macOS:
+launchctl unload -w ~/Library/LaunchAgents/de.heim-ki.rag-indexer.plist
+rm -f ~/Library/LaunchAgents/de.heim-ki.rag-indexer.plist
+
+# Beide: der Chroma-Container ist aus den Compose-Dateien verschwunden,
+# sein Volume bleibt aber liegen. Es enthält den alten RAG-Index und wird
+# nicht mehr gebraucht — löschen ist eine bewusste Entscheidung:
+docker rm -f chroma
+docker volume rm chroma-data
+```
+
+Dazu noch vier Kleinigkeiten, die sonst leise liegenbleiben:
+
+- **Das Werkzeug im Chat:** In Open WebUI unter *Arbeitsbereich → Werkzeuge* das Werkzeug „Heim-Dokumente durchsuchen" löschen. Es zeigt sonst weiter auf eine Datenbank, die es nicht mehr gibt — und das Modell ruft es trotzdem auf, wenn es beim Modell noch aktiviert ist. Die Vorlage `tools/heim_docs_suche.py` ist aus dem Repo entfernt.
+- **`.env` aufräumen:** `CHROMA_IMAGE` und `CHROMA_HOST_PORT` sind wirkungslos geworden und können raus; ebenso ein eventuelles `CHROMA_URL` in der eigenen Unit oder plist.
+- **Altes Manifest:** `rag-index-state.json` wird von niemandem mehr gelesen. `doc-sync.py` führt sein eigenes (`doc-sync-state.json`) und fängt bei null an — der erste Lauf konvertiert deshalb den kompletten Bestand noch einmal. Danach kann die alte Datei weg.
+- **Backups:** [`scripts/backup.sh`](scripts/backup.sh) sichert das Manifest jetzt als `doc-sync-state-*.json` statt `rag-index-state-*.json`. Das automatische Aufräumen über `KEEP_DAYS` kennt nur noch den neuen Namen — die alten `rag-index-state-*.json` im Backup-Verzeichnis bleiben also liegen, statt nach 14 Tagen zu verschwinden. Neue kommen keine hinzu; wer die vorhandenen loswerden will, löscht sie von Hand.
 
 ---
 
 ## 8. Ergebnis
 
 - Alle im Haushalt erreichen unter **`http://chat.heim.lan`** eine ChatGPT-ähnliche Oberfläche — ohne Ports, ohne IP-Adressen.
-- Die KI kennt die eigenen Dokumente (RAG mit Docling + ChromaDB + bge-m3).
+- Die KI kennt die eigenen Dokumente (RAG mit Docling + bge-m3 + Open WebUI) — per Upload im Browser, auf Wunsch zusätzlich als nächtlicher Ordner-Abgleich.
 - Braucht man mehr Leistung, startet man die Workstation — Open WebUI erreicht deren Ollama sofort über die in §5/§6 eingerichtete Verbindung `http://host.docker.internal:11435`; Menschen und CLI-Clients im LAN nutzen weiterhin `http://ollama-ws.heim.lan`.
 - **Keine Daten fließen „nach Amiland"** — alles bleibt im eigenen LAN.
 
@@ -739,15 +838,15 @@ ip -4 addr show docker0             # stimmt die Gateway-Adresse mit §5 überei
 # 7. Erreicht Open WebUI die Workstation? Erwartet: Modellliste
 docker exec open-webui curl -sS http://host.docker.internal:11435/api/tags
 
-# 8. Läuft der Indexer unter voller Sandbox durch?
-systemd-analyze verify /etc/systemd/system/rag-indexer.service
-sudo systemctl start rag-indexer.service
-journalctl -u rag-indexer.service -n 50
+# 8. Läuft der Dokument-Sync unter voller Sandbox durch? (nur Variante C)
+systemd-analyze verify /etc/systemd/system/doc-sync.service
+sudo systemctl start doc-sync.service
+journalctl -u doc-sync.service -n 50
 ```
 
 Zu Prüfung 3 und 4: `401` heißt „Zugangsdaten fehlen", `403` heißt „Quell-IP nicht in der Allowlist". Beide Antworten sind gute Nachrichten — sie belegen, dass `satisfy all` greift. Bekommt man an Stelle 2 dagegen eine Modellliste, ist die `auth_basic`-Konfiguration wirkungslos; kommt `500`, fehlt die htpasswd-Datei oder der Pfad in `auth_basic_user_file` stimmt nicht (`nginx -t` merkt das nicht, weil die Datei erst zur Laufzeit geöffnet wird).
 
-Zu Prüfung 8: Der erste Lauf lädt die Docling-Modelle herunter und dauert entsprechend. Er ist der eigentliche Test der Sandbox — ein direkter Aufruf per `sudo -u heim-ki …` umgeht die Unit und würde Schreibfehler, die erst `ProtectSystem=strict` verursacht, gar nicht zeigen.
+Zu Prüfung 8: Der erste Lauf lädt die Docling-Modelle herunter und dauert entsprechend. Er ist der eigentliche Test der Sandbox — ein direkter Aufruf per `sudo -u heim-ki …` umgeht die Unit und würde Schreibfehler, die erst `ProtectSystem=strict` verursacht, gar nicht zeigen. Das vorgeschaltete `systemd-analyze verify` ist hier ebenfalls Teil der Abnahme und nicht bloß Zierde: Die Unit im Repo ist auf einem macOS-Rechner entstanden und dort nie gegen ein echtes systemd gelaufen.
 
 ## 9. Updates
 
@@ -764,7 +863,7 @@ docker compose pull && docker compose up -d
 #  aktualisiert Homebrew: brew upgrade ollama)
 ```
 
-**Vor größeren Versionssprüngen** ein Backup ziehen (siehe §11): `sudo /srv/scripts/backup.sh` (macOS: `BACKUP_DIR=/opt/heim-ki/backups STATE_FILE=/opt/heim-ki/rag-index-state.json /opt/heim-ki/scripts/backup.sh` — ohne sudo, denn als root sähe die docker-CLI den Docker-Desktop-Daemon nicht) — oder einfach den nächtlichen Backup-Timer abwarten.
+**Vor größeren Versionssprüngen** ein Backup ziehen (siehe §11): `sudo /srv/scripts/backup.sh` (macOS: `BACKUP_DIR=/opt/heim-ki/backups STATE_FILE=/opt/heim-ki/doc-sync-state.json /opt/heim-ki/scripts/backup.sh` — ohne sudo, denn als root sähe die docker-CLI den Docker-Desktop-Daemon nicht) — oder einfach den nächtlichen Backup-Timer abwarten.
 
 ---
 
@@ -831,14 +930,14 @@ sudo nginx -t && sudo brew services restart nginx
 
 ## 11. Backup & Restore
 
-Gesichert werden muss, was nicht wiederbeschaffbar ist: das **Open-WebUI-Volume** (Nutzer, Chats, Wissenssammlungen), das **Chroma-Volume** (RAG-Index aus Variante B) und das Indexer-Manifest. Die Ollama-Modelle sind bewusst ausgenommen — die holt `ollama pull` jederzeit neu.
+Gesichert werden muss, was nicht wiederbeschaffbar ist: das **Open-WebUI-Volume** (Nutzer, Chats, Wissenssammlungen — und damit auch die Vektoren) sowie das **Manifest des Dokument-Sync** (`doc-sync-state.json`, nur bei Variante C). Die Ollama-Modelle sind bewusst ausgenommen — die holt `ollama pull` jederzeit neu, und auch der Markdown-Cache unter `CACHE_DIR` ist kein Backup wert: Er lässt sich jederzeit neu erzeugen, nur eben nicht umsonst.
 
-Das Skript [`scripts/backup.sh`](scripts/backup.sh) erledigt genau das (inklusive Aufräumen alter Stände, Standard: 14 Tage) und läuft täglich um 3:30 Uhr — nach dem RAG-Indexer. Für das Tar-Packen der Volumes startet es einen kleinen Alpine-Container; das Image ist per `ALPINE_IMAGE` auf einen festen Digest gepinnt (überschreibbar per Umgebungsvariable), damit nicht bei jedem Lauf ein frisches, ungeprüftes `:latest`-Image gezogen wird.
+Das Skript [`scripts/backup.sh`](scripts/backup.sh) erledigt genau das (inklusive Aufräumen alter Stände, Standard: 14 Tage) und läuft täglich um 3:30 Uhr — also nach dem nächtlichen Dokument-Sync. Für das Tar-Packen der Volumes startet es einen kleinen Alpine-Container; das Image ist per `ALPINE_IMAGE` auf einen festen Digest gepinnt (überschreibbar per Umgebungsvariable), damit nicht bei jedem Lauf ein frisches, ungeprüftes `:latest`-Image gezogen wird.
 
 *Linux* — per systemd-Timer:
 
 ```bash
-sudo mkdir -p /srv/scripts    # existiert schon, falls §7 Variante B eingerichtet wurde
+sudo mkdir -p /srv/scripts    # existiert schon, falls §7 Variante C eingerichtet wurde
 sudo cp scripts/backup.sh /srv/scripts/
 sudo chown root:root /srv/scripts/backup.sh
 sudo chmod 755 /srv/scripts/backup.sh
@@ -856,7 +955,7 @@ Das Backup bleibt bewusst root, weil es den Docker-Socket braucht — die docker
 *macOS* — per launchd-Job ([`scripts/launchd/de.heim-ki.backup.plist`](scripts/launchd/de.heim-ki.backup.plist), Ziel `/opt/heim-ki/backups`). Auch dieser Job läuft als **LaunchAgent in der Nutzer-Session**, denn die docker-CLI erreicht den Daemon von Docker Desktop/OrbStack nur dort (der Socket liegt unter `~/.docker/run/docker.sock`, nicht unter `/var/run/docker.sock`). Ist Docker nachts nicht erreichbar, bricht `backup.sh` mit Fehler ab, statt still ein leeres Backup zu schreiben — für zuverlässige Nachtläufe also §3, „Unbeaufsichtigter Betrieb" einrichten:
 
 ```bash
-# Verzeichnisse existieren schon, falls §7 Variante B eingerichtet wurde — sonst:
+# Verzeichnisse existieren schon, falls §7 Variante C eingerichtet wurde — sonst:
 sudo mkdir -p /opt/heim-ki/scripts /opt/heim-ki/logs /opt/heim-ki/backups
 sudo chown -R "$USER" /opt/heim-ki
 
@@ -872,7 +971,7 @@ tail -f /opt/heim-ki/logs/backup.log
 
 Zielverzeichnis ist `/srv/backups/heim-ki` bzw. `/opt/heim-ki/backups` (per `BACKUP_DIR` änderbar — idealerweise ein NAS-Mount, damit die Sicherung nicht auf derselben Platte liegt wie die Daten).
 
-**Restore** (Beispiel Open-WebUI-Volume; für `chroma-data` analog — macOS: `docker compose` jeweils mit `-f docker-compose.macos.yml` und dem Backup-Pfad `/opt/heim-ki/backups`):
+**Restore** (macOS: `docker compose` jeweils mit `-f docker-compose.macos.yml` und dem Backup-Pfad `/opt/heim-ki/backups`):
 
 ```bash
 docker compose down
@@ -926,12 +1025,14 @@ Bei Verdacht, dass eine der Absicherungen aus §5–§7 nicht greift, zuerst die
 | Chat antwortet `"bge-m3:latest" does not support chat` | Im Chat ist das Embedding-Modell als Antwortmodell ausgewählt. Unten im Eingabefeld ein echtes Chat-Modell wählen und die Frage neu senden; damit es nicht wieder passiert, `bge-m3` unter *Admin-Bereich → Einstellungen → Modelle* ausblenden (§7 Variante A). |
 | Upload bricht ab mit `Ollama embed error (503): ... maximum pending requests exceeded` | Die Extraktion war erfolgreich, das Einbetten überrennt Ollamas Warteschlange. In den *Admin-Einstellungen → Dokumente* **Embedding Batch Size** auf 64 und **Concurrent Requests** auf 4 setzen (§7 Variante A) — nicht über die `.env`, die Werte kommen aus der Datenbank. |
 | Upload bricht ab, `"POST /v1/convert/file" 504` in `docker logs docling` | Die Konvertierung überschreitet `max_sync_wait` von docling-serve (Image-Default 120 s). `DOCLING_SERVE_MAX_SYNC_WAIT` in der `.env` erhöhen (§7 Variante A). Bricht es *sofort* ab und ist das Ergebnis leer, ist eher das PDF defekt — prüfen mit `python3 -c "from pypdf import PdfReader; print(len(PdfReader('datei.pdf').pages))"`; „Stream has ended unexpectedly" heißt: unvollständig heruntergeladen. |
-| `port is already allocated` beim Start | Ein anderer Dienst hält den Host-Port. Wer? `lsof -nP -iTCP:<port> -sTCP:LISTEN`, dazu `docker ps --format '{{.Names}}\t{{.Ports}}'`. Achtung: ein Container auf `0.0.0.0:<port>` blockiert auch ein `127.0.0.1:<port>`. Für Chroma lässt sich der Host-Port per `CHROMA_HOST_PORT` in der `.env` umlegen (§7 Variante B) — dann `CHROMA_URL` des Indexers mitziehen. |
-| Werkzeug „Heim-Dokumente" findet nichts | Läuft Chroma? (`docker ps` → `chroma (healthy)`; ein bloßes `docker compose ps` zeigt Profil-Dienste wie `chroma` nur mit `--profile rag-batch` — und auf macOS nur mit `-f docker-compose.macos.yml`). Hat der Indexer geschrieben? (Linux: `journalctl -u rag-indexer.service`, macOS: `/opt/heim-ki/logs/rag-indexer.log`). Stimmen Collection-Name und `chroma_url` in den Valves des Werkzeugs? |
+| `port is already allocated` beim Start | Ein anderer Dienst hält den Host-Port. Wer? `lsof -nP -iTCP:<port> -sTCP:LISTEN`, dazu `docker ps --format '{{.Names}}\t{{.Ports}}'`. Achtung: ein Container auf `0.0.0.0:<port>` blockiert auch ein `127.0.0.1:<port>`. |
+| Doc-Sync bricht ab: `Sammlung '…' existiert nicht` | Gewollter Abbruch, kein Fehler im Skript (§7 Variante C): Die Sammlung wird über `KNOWLEDGE_NAME` **nach Namen** gesucht. Erst den Namen gegen *Arbeitsbereich → Wissen* prüfen — Groß-/Kleinschreibung und Bindestriche zählen. Ist er wirklich neu, einmalig mit `--create` starten. |
+| Doc-Sync läuft, aber der Chat findet nichts | Landen die Dateien in der Sammlung, die der Chat einbindet? (`#Heim-Dokumente` bindet die Sammlung mit *diesem* Namen ein — bei zwei ähnlich benannten erwischt man leicht die falsche.) Logs: Linux `journalctl -u doc-sync.service`, macOS `/opt/heim-ki/logs/doc-sync.log`. |
+| Doc-Sync ist nachts viel langsamer als beim Handlauf | Deutet auf fehlenden GPU-Zugriff. Linux: Steht `PrivateDevices=yes` in der Unit? (Gehört dort *nicht* hin, §7 Variante C.) macOS: Der LaunchAgent braucht eine angemeldete Session, sonst fehlt MPS. Im Log nach `Accelerator device:` suchen — steht dort `'cpu'`, ist genau das die Ursache. |
 | macOS: Ollama quälend langsam, Mac-Lüfter dreht | Läuft Ollama versehentlich als Container? Unter macOS haben Container **keinen GPU-Zugriff** — Ollama muss nativ laufen (`brew services start ollama`, §3) und Open WebUI über `docker-compose.macos.yml` auf `host.docker.internal:11434` zeigen. |
 | macOS: Open WebUI erreicht Ollama nicht | Läuft das native Ollama? (`ollama ps`, `brew services list`). In den Open-WebUI-*Verbindungen* muss `http://host.docker.internal:11434` stehen, nicht `http://ollama:11434` — den Ollama-Service-Namen gibt es in der macOS-Compose-Datei nicht. |
-| macOS: Nachtjobs (Indexer/Backup) sind nicht gelaufen | Die Jobs laufen als LaunchAgents nur in einer **angemeldeten Session** mit laufendem Docker Desktop/OrbStack und wachem Mac — §3, „Unbeaufsichtigter Betrieb" (Auto-Login, „Start at login", `pmset`). Status: `launchctl list \| grep heim-ki`; Logs: `/opt/heim-ki/logs/*.log`. |
-| Allgemeine Diagnose | `docker compose ps` (Healthchecks!; macOS: mit `-f docker-compose.macos.yml`, Profil-Dienste zusätzlich mit `--profile rag`/`rag-batch` — oder einfach `docker ps`), `docker logs open-webui`, `docker stats`; nur Linux: `docker logs ollama`, `nvidia-smi` (macOS: Ollama nativ → `ollama ps`, Logs von `brew services`). |
+| macOS: Nachtjobs (Doc-Sync/Backup) sind nicht gelaufen | Die Jobs laufen als LaunchAgents nur in einer **angemeldeten Session** mit laufendem Docker Desktop/OrbStack und wachem Mac — §3, „Unbeaufsichtigter Betrieb" (Auto-Login, „Start at login", `pmset`). Status: `launchctl list \| grep heim-ki`; Logs: `/opt/heim-ki/logs/*.log`. |
+| Allgemeine Diagnose | `docker compose ps` (Healthchecks!; macOS: mit `-f docker-compose.macos.yml`, der Docling-Dienst zusätzlich mit `--profile rag` — oder einfach `docker ps`), `docker logs open-webui`, `docker stats`; nur Linux: `docker logs ollama`, `nvidia-smi` (macOS: Ollama nativ → `ollama ps`, Logs von `brew services`). |
 
 ---
 
@@ -950,7 +1051,6 @@ Bei Verdacht, dass eine der Absicherungen aus §5–§7 nicht greift, zuerst die
 | bge-m3 (BAAI) | https://ollama.com/library/bge-m3 · https://huggingface.co/BAAI/bge-m3 |
 | Docling (IBM Research) | https://github.com/docling-project/docling |
 | Docling Serve | https://github.com/docling-project/docling-serve |
-| ChromaDB | https://www.trychroma.com |
 | NGINX Reverse Proxy | https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/ |
 | mkcert | https://github.com/FiloSottile/mkcert |
 | NVIDIA Container Toolkit | https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html |
