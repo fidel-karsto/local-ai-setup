@@ -6,10 +6,16 @@ GPU-nahe Teil und soll unabhängig von Open WebUI testbar bleiben.
 Beschleuniger und OCR-Motor werden NICHT im Code festgelegt. Doclings
 Default `device='auto'` wählt auf macOS MPS und unter Linux CUDA, und
 `ocr_engine=auto` wählt auf macOS von selbst `ocrmac` (Apple Vision) — genau
-die Kombination, die in der Messung 2,8x schneller war als der Container. Die
-Thread-Zahl kommt aus der Umgebung: docling liest OMP_NUM_THREADS selbst
-(AcceleratorOptions), gesetzt wird sie in der launchd-plist bzw. der
-systemd-Unit.
+die Kombination, die in der Messung 2,8x schneller war als der Container mit
+4 Threads (gegen die heute ausgelieferten 6 Threads sind es 1,9x).
+
+Auch die Thread-Zahl steht bewusst nicht im Code — und ebenso wenig in der
+launchd-plist oder der systemd-Unit: nativ gemessen war sie wirkungslos
+(4/6/8/12 Threads ergaben 180,2 / 180,2 / 181,4 / 180,8 Sekunden). Der native
+Weg hängt an MPS und Apple Vision, nicht an CPU-Threads. Wer trotzdem
+eingreifen will, setzt OMP_NUM_THREADS in der Umgebung; docling liest die
+Variable selbst (AcceleratorOptions). DOCLING_OMP_THREADS aus der .env
+betrifft ausschließlich den Docling-Container.
 """
 from __future__ import annotations
 

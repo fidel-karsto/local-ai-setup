@@ -56,7 +56,7 @@ Das Setup besteht aus zwei Maschinen und mehreren Diensten:
 | **[Ollama](https://ollama.com)** | Lokaler LLM-Server. Läuft auf dem Docker-Host (Linux: als Container mit CUDA-GPU; macOS: nativ mit Metal, siehe §3) **und** zusätzlich „on demand" auf der Workstation (Windows oder macOS). |
 | **[Open WebUI](https://github.com/open-webui/open-webui)** | ChatGPT-ähnliche Weboberfläche für Ollama — mit Nutzerverwaltung, Dokumenten-Upload und eingebautem RAG. |
 | **[bge-m3](https://ollama.com/library/bge-m3)** | Mehrsprachiges Embedding-Modell (BAAI). Wandelt Texte in Vektoren um — die Grundlage für die Dokumentensuche (RAG). Sehr gut für Deutsch geeignet. |
-| **[Docling](https://github.com/docling-project/docling)** | Open-Source-Tool von IBM Research: konvertiert PDF, DOCX, PPTX, HTML usw. in sauberes, strukturiertes Markdown/JSON — inkl. Tabellen und Layout-Erkennung. Läuft wahlweise als Container oder nativ auf dem Host; auf Apple Silicon ist der native Weg rund dreimal so schnell (§7). (Im Original-Post „Dockling" geschrieben — gemeint ist Docling.) |
+| **[Docling](https://github.com/docling-project/docling)** | Open-Source-Tool von IBM Research: konvertiert PDF, DOCX, PPTX, HTML usw. in sauberes, strukturiertes Markdown/JSON — inkl. Tabellen und Layout-Erkennung. Läuft wahlweise als Container oder nativ auf dem Host; auf Apple Silicon ist der native Weg rund doppelt so schnell wie der Container in der hier ausgelieferten Konfiguration mit 6 Threads (§7). (Im Original-Post „Dockling" geschrieben — gemeint ist Docling.) |
 | **Vektorspeicher von Open WebUI** | Vektordatenbank. Speichert die von bge-m3 erzeugten Embeddings und liefert bei einer Frage die passenden Dokument-Schnipsel zurück. Sie steckt bereits in Open WebUI — kein eigener Dienst, kein eigener Container. |
 | **[NGINX](https://nginx.org)** | Reverse Proxy auf dem Docker-Host. Macht aus `http://192.168.x.y:11434` schöne, sprechende Namen wie `http://ollama.heim.lan` — „ohne komische Ports". |
 
@@ -665,7 +665,23 @@ python3 -m venv /opt/heim-ki/scripts/.venv
 
 **Alle vier Python-Dateien müssen mit.** `doc-sync.py` ist nur die Ablaufsteuerung; es importiert `docscan` (Dateiauswahl samt Symlink-Schutz), `docconvert` (die Docling-Konvertierung) und `webui_client` (die REST-Aufrufe). Fehlt eines davon, bricht der Lauf beim Import ab. `requirements.txt` zieht `docling>=2.0,<3` und `requests>=2.31` — die Obergrenze bei docling ist Absicht: Ein Major-Sprung könnte die Pipeline-Optionen in `docconvert.py` lautlos umwerfen, und das würde man erst an schlechteren Konvertaten merken.
 
-**2. API-Key in Open WebUI erzeugen:** `doc-sync.py` spricht mit Open WebUI über dessen REST-API und braucht dafür einen persönlichen Schlüssel. In der Oberfläche unter *Einstellungen → Konto → API-Schlüssel* einen erzeugen und in die Datei schreiben, die das Skript liest (`WEBUI_API_KEY_FILE`):
+**2. API-Schlüssel global freischalten** — der Schritt, ohne den Variante C gar nicht erst anfängt. Open WebUI liefert die API-Schlüssel **ab Werk abgeschaltet** aus; in `open_webui/config.py` steht `ENABLE_API_KEYS = os.getenv('ENABLE_API_KEYS', 'False')`. Solange das so bleibt, gibt es in der Oberfläche keinen Schlüssel zu erzeugen, und `doc-sync.py` hat nichts, womit es sich anmelden könnte.
+
+Der Schalter sitzt in den *Admin-Einstellungen* im Bereich *Authentifizierung* und heißt dort **API-Schlüssel** („Erlaubt Benutzern, API-Schlüssel für den programmatischen Zugriff zu erstellen"). Einschalten und speichern.
+
+> **Achtung:** Auch dieser Wert ist *PersistentConfig* — Open WebUI liest ihn nur beim allerersten Start aus der Umgebung und nimmt ihn danach aus der Datenbank (Schlüssel `auth.enable_api_keys`). Ein `ENABLE_API_KEYS=true` in der `.env` oder der Compose-Datei bleibt bei einer bereits laufenden Installation also wirkungslos; die Änderung muss durch die Oberfläche. Nachsehen lässt sich der gespeicherte Stand mit:
+>
+> ```bash
+> docker exec open-webui python3 -c "
+> import sqlite3
+> db = sqlite3.connect('file:/app/backend/data/webui.db?mode=ro', uri=True)
+> for k, v in db.execute(\"select key, value from config where key like 'auth.%api_key%' or key = 'auth.enable_api_keys'\"):
+>     print(k, '=', v)"
+> ```
+>
+> Erwartet wird `auth.enable_api_keys = true`. Steht dort `false`, ist der Schalter noch nicht gesetzt — und der nächste Schritt läuft ins Leere.
+
+**3. API-Key in Open WebUI erzeugen:** `doc-sync.py` spricht mit Open WebUI über dessen REST-API und braucht dafür einen persönlichen Schlüssel. In der Oberfläche unter *Einstellungen → Konto* im Abschnitt *API-Schlüssel* einen erzeugen und in die Datei schreiben, die das Skript liest (`WEBUI_API_KEY_FILE`):
 
 ```bash
 # Linux — die Datei gehört dem Dienst-Account und sonst niemandem:
@@ -677,9 +693,9 @@ printf '%s' 'sk-…' > /opt/heim-ki/webui-api-key
 chmod 600 /opt/heim-ki/webui-api-key
 ```
 
-Das `chmod 600` ist kein Schmuck: Der Schlüssel liegt im Klartext auf der Platte und trägt die Rechte des Kontos, mit dem er erzeugt wurde. Wer ihn lesen kann, kann in Open WebUI alles, was dieser Nutzer kann — Chats inklusive. (Fehlt der Menüpunkt unter *Konto* ganz, ist die API-Schlüssel-Funktion in den *Admin-Einstellungen* global abgeschaltet und muss dort erst freigegeben werden.)
+Das `chmod 600` ist kein Schmuck: Der Schlüssel liegt im Klartext auf der Platte und trägt die Rechte des Kontos, mit dem er erzeugt wurde. Wer ihn lesen kann, kann in Open WebUI alles, was dieser Nutzer kann — Chats inklusive. (Fehlt der Abschnitt unter *Konto* ganz, ist Schritt 2 noch offen; bei Nicht-Admin-Konten fehlt er zusätzlich, solange die Gruppe nicht das Recht `features.api_keys` hat.)
 
-**3. Wissenssammlung anlegen:** Das Skript sucht die Sammlung **über ihren Namen** — `KNOWLEDGE_NAME`, Default `Heim-Dokumente`. Entweder legt man sie vorher in der Oberfläche unter *Arbeitsbereich → Wissen* an, oder man überlässt das dem ersten Lauf mit `--create` (Schritt 4).
+**4. Wissenssammlung anlegen:** Das Skript sucht die Sammlung **über ihren Namen** — `KNOWLEDGE_NAME`, Default `Heim-Dokumente`. Entweder legt man sie vorher in der Oberfläche unter *Arbeitsbereich → Wissen* an, oder man überlässt das dem ersten Lauf mit `--create` (Schritt 5).
 
 Findet das Skript die Sammlung nicht und fehlt `--create`, bricht es ab:
 
@@ -689,13 +705,22 @@ FEHLER: Sammlung 'Heim-Dokumente' existiert nicht. Mit --create anlegen — oder
 
 Das ist Absicht und der einzige Grund, warum `--create` überhaupt existiert. Würde das Skript stillschweigend anlegen, was es nicht findet, dann erzeugte ein Tippfehler im Namen — oder ein `KNOWLEDGE_NAME`, das in der Unit anders steht als in der plist — beim nächsten Lauf klaglos eine zweite, leere Sammlung. Im Chat sähe man davon nichts: `#Heim-Dokumente` fände weiterhin die alte, während der Nachtjob fleißig die neue befüllt. Ein Abbruch mit klarer Meldung ist da die freundlichere Variante.
 
-**4. Erster Lauf von Hand.** Dokumente vorher nach `/srv/dokumente` bzw. `/opt/heim-ki/dokumente` legen.
+**5. Erster Lauf von Hand.** Dokumente vorher nach `/srv/dokumente` bzw. `/opt/heim-ki/dokumente` legen.
 
 ```bash
 # Linux — als der Dienst-Account, damit Manifest und Cache gleich die
-# richtigen Rechte bekommen. Die Pfade sind hier die Defaults aus
-# doc-sync.py, es braucht also keine Umgebungsvariablen:
-sudo -u heim-ki /srv/scripts/.venv/bin/python /srv/scripts/doc-sync.py --create
+# richtigen Rechte bekommen. Die Pfade zu Dokumenten, Manifest und Cache sind
+# die Defaults aus doc-sync.py und brauchen keine Variablen; HOME, HF_HOME und
+# XDG_CACHE_HOME dagegen schon: heim-ki hat wegen "--no-create-home" gar kein
+# $HOME, und ohne diese drei würde Doclings Modell-Download entweder in ein
+# Verzeichnis laufen, das der Account nicht anlegen darf, oder in den Cache des
+# aufrufenden Nutzers — der Dienst lüde dann später alles ein zweites Mal. Es
+# sind exakt die Werte aus scripts/systemd/doc-sync.service:
+sudo -u heim-ki env \
+  HOME=/srv/heim-ki/.home \
+  HF_HOME=/srv/heim-ki/.cache/huggingface \
+  XDG_CACHE_HOME=/srv/heim-ki/.cache \
+  /srv/scripts/.venv/bin/python /srv/scripts/doc-sync.py --create
 
 # macOS — die Defaults im Skript sind die Linux-Pfade, hier also alle setzen.
 # Genau diese Werte stehen später auch in der plist:
@@ -709,7 +734,9 @@ KNOWLEDGE_NAME=Heim-Dokumente \
   /opt/heim-ki/scripts/.venv/bin/python /opt/heim-ki/scripts/doc-sync.py --create
 ```
 
-Der allererste Lauf lädt zusätzlich Doclings Layout- und Tabellenmodelle über den HuggingFace Hub nach — das dauert spürbar und passiert nur einmal. (Die vollständige Liste der Umgebungsvariablen samt Defaults steht im Kopf von [`scripts/doc-sync.py`](scripts/doc-sync.py); nachlesen ist verlässlicher als raten.)
+Der allererste Lauf lädt zusätzlich Doclings Layout- und Tabellenmodelle über den HuggingFace Hub nach — das dauert spürbar und passiert nur einmal. Genau deshalb stehen die drei Cache-Variablen oben: Sie sorgen dafür, dass der Download unter `/srv/heim-ki` landet, also dort, wo der Dienst ihn später wiederfindet. (Die vollständige Liste der Umgebungsvariablen samt Defaults steht im Kopf von [`scripts/doc-sync.py`](scripts/doc-sync.py); nachlesen ist verlässlicher als raten.)
+
+Dieser Handaufruf ist bewusst nur die Erstbefüllung, kein Test der Einrichtung: Er umgeht die systemd-Unit und damit deren Sandbox, Fehler aus `ProtectSystem=strict` und Verwandten zeigen sich hier also nicht. Der eigentliche Testlauf folgt im nächsten Schritt über `systemctl start`.
 
 Was das Skript dabei tut, und warum:
 
@@ -721,7 +748,7 @@ Was das Skript dabei tut, und warum:
 - Ein `flock` auf `LOCK_FILE` verhindert, dass ein Handaufruf und der Nachtlauf gleichzeitig schreiben.
 - Eine kaputte Datei bricht den Lauf nicht ab; sie wird protokolliert, und der Exit-Code ist am Ende ungleich 0.
 
-**5. Nächtlich laufen lassen:**
+**6. Nächtlich laufen lassen:**
 
 *Linux* — als systemd-Timer ([`scripts/systemd/`](scripts/systemd/)), 2:00 Uhr; dank `Persistent=true` werden verpasste Läufe nachgeholt, und die Logs landen im journald:
 
@@ -762,7 +789,7 @@ Bewusst ein **LaunchAgent in der Nutzer-Session**, kein root-Daemon: Der Sync br
 
 (launchd holt einen verpassten Lauf nach, wenn der Mac zur geplanten Zeit nur geschlafen hat — nach einem kompletten Shutdown oder ohne angemeldete Session allerdings nicht.)
 
-**6. Benutzen:** Im Chat die Sammlung mit `#Heim-Dokumente` einbinden und fragen („Was steht in meinem Mietvertrag zur Kündigungsfrist?"). Die Antwort kommt mit Quellenangaben — die Dokumente liegen ja in einer ganz gewöhnlichen Wissenssammlung, und für Open WebUI ist nicht zu unterscheiden, ob sie über den Browser oder über den Nachtjob hineingekommen sind.
+**7. Benutzen:** Im Chat die Sammlung mit `#Heim-Dokumente` einbinden und fragen („Was steht in meinem Mietvertrag zur Kündigungsfrist?"). Die Antwort kommt mit Quellenangaben — die Dokumente liegen ja in einer ganz gewöhnlichen Wissenssammlung, und für Open WebUI ist nicht zu unterscheiden, ob sie über den Browser oder über den Nachtjob hineingekommen sind.
 
 > **Hinweis:** Variante C nutzt *nicht* den Docling-Container aus Variante A, sondern die Docling-Python-Bibliothek direkt auf dem Host — das Compose-Profil `rag` braucht sie also nicht. Beide Varianten lassen sich trotzdem parallel betreiben: Sie schreiben in denselben Speicher. Man kann dieselbe Sammlung mischen oder dem Nachtjob über `KNOWLEDGE_NAME` eine eigene geben.
 
@@ -796,7 +823,10 @@ Dazu noch vier Kleinigkeiten, die sonst leise liegenbleiben:
 
 - **Das Werkzeug im Chat:** In Open WebUI unter *Arbeitsbereich → Werkzeuge* das Werkzeug „Heim-Dokumente durchsuchen" löschen. Es zeigt sonst weiter auf eine Datenbank, die es nicht mehr gibt — und das Modell ruft es trotzdem auf, wenn es beim Modell noch aktiviert ist. Die Vorlage `tools/heim_docs_suche.py` ist aus dem Repo entfernt.
 - **`.env` aufräumen:** `CHROMA_IMAGE` und `CHROMA_HOST_PORT` sind wirkungslos geworden und können raus; ebenso ein eventuelles `CHROMA_URL` in der eigenen Unit oder plist.
-- **Altes Manifest:** `rag-index-state.json` wird von niemandem mehr gelesen. `doc-sync.py` führt sein eigenes (`doc-sync-state.json`) und fängt bei null an — der erste Lauf konvertiert deshalb den kompletten Bestand noch einmal. Danach kann die alte Datei weg.
+- **Altes Manifest:** `rag-index-state.json` wird von niemandem mehr gelesen. `doc-sync.py` führt sein eigenes (`doc-sync-state.json`) und fängt bei null an — der erste Lauf konvertiert deshalb den kompletten Bestand noch einmal. Danach kann die alte Datei weg — je nach Alter der Installation liegt sie unter `/srv/rag-index-state.json` oder `/srv/heim-ki/rag-index-state.json` (unter macOS analog in `/opt/heim-ki/`):
+  ```bash
+  sudo rm -f /srv/rag-index-state.json /srv/heim-ki/rag-index-state.json
+  ```
 - **Backups:** [`scripts/backup.sh`](scripts/backup.sh) sichert das Manifest jetzt als `doc-sync-state-*.json` statt `rag-index-state-*.json`. Das automatische Aufräumen über `KEEP_DAYS` kennt nur noch den neuen Namen — die alten `rag-index-state-*.json` im Backup-Verzeichnis bleiben also liegen, statt nach 14 Tagen zu verschwinden. Neue kommen keine hinzu; wer die vorhandenen loswerden will, löscht sie von Hand.
 
 ---

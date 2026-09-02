@@ -1,5 +1,5 @@
 [Unit]
-Description=Tägliches Backup der Heim-KI-Daten (3:30 Uhr, nach dem RAG-Indexer)
+Description=Tägliches Backup der Heim-KI-Daten (3:30 Uhr, nach dem Dokument-Sync)
 
 [Timer]
 OnCalendar=*-*-* 03:30:00
