@@ -695,6 +695,10 @@ chmod 600 /opt/heim-ki/webui-api-key
 
 Das `chmod 600` ist kein Schmuck: Der Schlüssel liegt im Klartext auf der Platte und trägt die Rechte des Kontos, mit dem er erzeugt wurde. Wer ihn lesen kann, kann in Open WebUI alles, was dieser Nutzer kann — Chats inklusive. (Fehlt der Abschnitt unter *Konto* ganz, ist Schritt 2 noch offen; bei Nicht-Admin-Konten fehlt er zusätzlich, solange die Gruppe nicht das Recht `features.api_keys` hat.)
 
+> **Den Schlüssel deshalb aus einem eigens angelegten, nicht-administrativen Konto ausstellen — nicht aus dem Admin-Konto.** Derselbe Prozess, der den Schlüssel im Klartext hält, lässt auch Docling laufen und parst damit fremde PDFs, DOCX- und HTML-Dateien aus einem Verzeichnis, in das der Login-Nutzer schreiben darf. Dokumentenparser sind die größte Angriffsfläche dieses Aufbaus, und der Schaden eines Fehlers in ihnen soll nicht „vollständiger Lesezugriff auf die Chats aller Haushaltsmitglieder" sein. Also in Open WebUI ein eigenes Konto für den Sync anlegen (normale Rolle, kein Admin), seiner Gruppe das Recht `features.api_keys` geben und den Schlüssel dort erzeugen. Die Wissenssammlung aus Schritt 4 gehört dann diesem Konto und muss den übrigen Nutzern unter *Arbeitsbereich → Wissen* gegebenenfalls noch freigegeben werden.
+>
+> Unter macOS gibt es zur Linux-Sandbox der systemd-Unit **keine Entsprechung**: Der LaunchAgent läuft als der angemeldete Nutzer mit dessen vollen Rechten, weil er die GPU und den Docker-Socket der Sitzung braucht. Ausgerechnet auf der Plattform, für die dieser Umbau optimiert ist, gibt es für den Punkt oben also gar keine technische Eindämmung — umso wichtiger ist dort das eigene Konto.
+
 **4. Wissenssammlung anlegen:** Das Skript sucht die Sammlung **über ihren Namen** — `KNOWLEDGE_NAME`, Default `Heim-Dokumente`. Entweder legt man sie vorher in der Oberfläche unter *Arbeitsbereich → Wissen* an, oder man überlässt das dem ersten Lauf mit `--create` (Schritt 5).
 
 Findet das Skript die Sammlung nicht und fehlt `--create`, bricht es ab:

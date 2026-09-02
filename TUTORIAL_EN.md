@@ -695,6 +695,10 @@ chmod 600 /opt/heim-ki/webui-api-key
 
 The `chmod 600` isn't decoration: the key sits in plain text on disk and carries the permissions of the account it was created with. Whoever can read it can do everything in Open WebUI that this user can — chats included. (If the section under *Account* is missing entirely, step 2 is still open; on non-admin accounts it is also missing as long as the group doesn't hold the `features.api_keys` permission.)
 
+> **So issue the key from an account created specifically for this and without admin rights — not from the admin account.** The very same process that holds the key in plain text also runs Docling, and thereby parses foreign PDFs, DOCX and HTML files out of a directory the login user may write to. Document parsers are the largest attack surface of this setup, and the damage from a flaw in one of them should not be "full read access to every household member's chats." So create a dedicated account for the sync in Open WebUI (ordinary role, not admin), give its group the `features.api_keys` permission and generate the key there. The knowledge collection from step 4 then belongs to that account and may still have to be shared with the other users under *Workspace → Knowledge*.
+>
+> On macOS there is **no equivalent** to the Linux sandbox of the systemd unit: the LaunchAgent runs as the logged-in user with that user's full rights, because it needs the session's GPU and Docker socket. On precisely the platform this rebuild is optimized for, there is therefore no technical containment for the point above — which makes the dedicated account all the more important there.
+
 **4. Create the knowledge collection:** The script looks the collection up **by its name** — `KNOWLEDGE_NAME`, default `Heim-Dokumente`. Either create it beforehand in the UI under *Workspace → Knowledge*, or leave that to the first run with `--create` (step 5).
 
 If the script doesn't find the collection and `--create` is absent, it aborts:
